@@ -11,5 +11,5 @@ COPY . .
 
 EXPOSE 8080
 
-RUN chmod +x start.sh
-CMD ["./start.sh"]
+# Single CMD - do not set a custom "Start Command" in Railway (it overrides this)
+CMD sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput || true && exec gunicorn evicted.wsgi --bind 0.0.0.0:\${PORT:-8080} --workers 1 --timeout 120 --access-logfile - --error-logfile -"
