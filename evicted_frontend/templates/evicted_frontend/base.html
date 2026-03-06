@@ -1,0 +1,18 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Parking{% endblock %} | Evicted</title>
+    <link rel="stylesheet" href="{% static 'evicted_frontend/style.css' %}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="{% static 'evicted_frontend/app.js' %}"></script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

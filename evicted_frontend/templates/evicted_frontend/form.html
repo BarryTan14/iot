@@ -1,0 +1,72 @@
+{% extends "evicted_frontend/base.html" %}
+{% load static %}
+{% block title %}Parking form{% endblock %}
+{% block content %}
+<h1>Parking form</h1>
+<form id="parking-form" class="card form-grid">
+    {% csrf_token %}
+    <input type="hidden" name="lot_number" id="lot_number" value="{{ lot_number|default:'' }}">
+    <label for="carplate">Car plate *</label>
+    <input type="text" id="carplate" name="carplate" required placeholder="e.g. ABC 1234">
+    <label for="name">Name *</label>
+    <input type="text" id="name" name="name" required placeholder="Your name">
+    <label for="time_parked">Time parked *</label>
+    <input type="datetime-local" id="time_parked" name="time_parked" readonly placeholder="Set by staff">
+    <label for="phone">Phone number *</label>
+    <input type="tel" id="phone" name="phone" required placeholder="e.g. +65 9123 4567">
+    <label for="lot_display">Lot number</label>
+    <input type="text" id="lot_display" value="{{ lot_number|default:'' }}" placeholder="From QR or enter manually" data-sync-to="lot_number">
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Submit</button>
+    </div>
+    <p id="form-status" class="muted"></p>
+</form>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function() {
+    const form = document.getElementById("parking-form");
+    const timeParkedInput = document.getElementById("time_parked");
+    const lotDisplay = document.getElementById("lot_display");
+    const lotHidden = document.getElementById("lot_number");
+    const formStatus = document.getElementById("form-status");
+
+    if (lotDisplay && lotHidden) {
+        lotDisplay.addEventListener("input", function() { lotHidden.value = lotDisplay.value; });
+    }
+
+    function setTimeParked(iso) {
+        if (!timeParkedInput || !iso) return;
+        const d = new Date(iso);
+        const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+        timeParkedInput.value = local.toISOString().slice(0, 16);
+    }
+
+    fetch("{% url 'evicted_frontend:last_trigger' %}")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.triggered_at) setTimeParked(data.triggered_at);
+        })
+        .catch(function() {});
+
+    if (form) {
+        form.addEventListener("submit", function(e) {
+            e.preventDefault();
+            formStatus.textContent = "Submitting…";
+            const fd = new FormData(form);
+            if (lotDisplay && lotDisplay.value) fd.set("lot_number", lotDisplay.value);
+            fetch("{% url 'evicted_frontend:submit_form' %}", { method: "POST", body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.ok && data.redirect) {
+                        window.location.href = data.redirect;
+                    } else {
+                        formStatus.textContent = data.error || "Submission failed.";
+                    }
+                })
+                .catch(function() { formStatus.textContent = "Request failed."; });
+        });
+    }
+})();
+</script>
+{% endblock %}

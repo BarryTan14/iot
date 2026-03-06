@@ -1,0 +1,111 @@
+{% extends "evicted_frontend/base.html" %}
+{% load static %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Parking – Staff</h1>
+<section class="card">
+    <h2>1. Trigger workflow</h2>
+    <p>Click to record current time as “Time parked” (for testing).</p>
+    {% csrf_token %}
+    <button type="button" id="trigger-workflow" class="btn btn-primary">Trigger workflow</button>
+    <p id="trigger-status" class="muted"></p>
+</section>
+<section class="card" id="qr-section" style="display: none;">
+    <h2>2. QR codes for form</h2>
+    <p>Users scan to open the parking form. Each QR links to a specific lot.</p>
+    <div class="qr-grid">
+        <div class="qr-item">
+            <span class="qr-label">Lot 1</span>
+            <div id="qrcode-1" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 2</span>
+            <div id="qrcode-2" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 3</span>
+            <div id="qrcode-3" class="qrcode-container"></div>
+        </div>
+    </div>
+</section>
+<section class="card">
+    <h2>3. Current submissions</h2>
+    {% if submissions %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Car plate</th>
+                    <th>Name</th>
+                    <th>Lot</th>
+                    <th>Time parked</th>
+                    <th>Time left</th>
+                    <th>Phone</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in submissions %}
+                <tr>
+                    <td>{{ s.carplate }}</td>
+                    <td>{{ s.name }}</td>
+                    <td>{{ s.lot_number }}</td>
+                    <td>{{ s.time_parked|date:"M d, H:i" }}</td>
+                    <td>{% if s.time_car_left %}{{ s.time_car_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
+                    <td>{{ s.phone }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No submissions yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<script>
+(function() {
+    const formUrlBase = "{{ form_url|escapejs }}";
+    const triggerBtn = document.getElementById("trigger-workflow");
+    const triggerStatus = document.getElementById("trigger-status");
+    const qrSection = document.getElementById("qr-section");
+    const lots = [1, 2, 3];
+
+    function drawQr(containerId, lotNum) {
+        var container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = "";
+        var url = formUrlBase + (formUrlBase.indexOf("?") >= 0 ? "&" : "?") + "lot=" + lotNum;
+        var canvas = document.createElement("canvas");
+        QRCode.toCanvas(canvas, url, { width: 160 }, function(err) {
+            if (err) { container.textContent = "QR error"; return; }
+            container.appendChild(canvas);
+        });
+    }
+
+    function showAndDrawQrcodes() {
+        if (typeof QRCode === "undefined") return;
+        qrSection.style.display = "block";
+        lots.forEach(function(lot, i) {
+            drawQr("qrcode-" + (i + 1), lot);
+        });
+    }
+
+    if (triggerBtn) {
+        triggerBtn.addEventListener("click", function() {
+            triggerStatus.textContent = "Sending…";
+            var formData = new FormData();
+            formData.append("csrfmiddlewaretoken", document.querySelector("[name=csrfmiddlewaretoken]")?.value || "");
+            fetch("{% url 'evicted_frontend:trigger_workflow' %}", { method: "POST", body: formData })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    triggerStatus.textContent = data.ok ? "Triggered at " + (data.triggered_at || "") : (data.error || "Failed");
+                    if (data.ok) showAndDrawQrcodes();
+                })
+                .catch(function() { triggerStatus.textContent = "Request failed"; });
+        });
+    }
+})();
+</script>
+{% endblock %}
