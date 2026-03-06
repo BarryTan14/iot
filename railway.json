@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn evicted.wsgi",
+    "startCommand": "python3 manage.py migrate --noinput && python3 manage.py collectstatic --noinput && gunicorn evicted.wsgi",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
