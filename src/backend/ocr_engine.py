@@ -3,6 +3,8 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 import re
 from pathlib import Path
+from typing import Optional
+
 from paddleocr import PaddleOCR
 
 
@@ -22,14 +24,17 @@ class OcrEngine:
 
     @staticmethod
     def looks_like_plate(text: str) -> bool:
+        # Example matches:
+        # S1234A
+        # SB1234D
+        # E123A
         return bool(re.fullmatch(r"[A-Z]{1,3}\d{1,4}[A-Z]?", text))
 
     def process_image(self, image_path: Path) -> dict:
         results = self.ocr.predict(str(image_path))
 
-        best_plate = None
+        best_plate: Optional[str] = None
         best_score = -1.0
-        all_candidates = []
 
         for res in results:
             data = res.json
@@ -39,26 +44,20 @@ class OcrEngine:
             rec_scores = inner.get("rec_scores", [])
 
             for raw_text, raw_score in zip(rec_texts, rec_scores):
-                score = float(raw_score)
                 normalized = self.normalize_plate_text(raw_text)
+                score = float(raw_score)
 
-                candidate = {
-                    "raw_text": raw_text,
-                    "normalized": normalized,
-                    "confidence": score,
-                    "looks_like_plate": self.looks_like_plate(normalized),
-                }
-                all_candidates.append(candidate)
-
-                if candidate["looks_like_plate"] and score > best_score:
+                if self.looks_like_plate(normalized) and score > best_score:
                     best_plate = normalized
                     best_score = score
 
-        should_retry = (best_plate is None) or (best_score < self.confidence_threshold)
+        if best_plate is None:
+            return {
+                "carplate_num": None,
+                "confidence_percentage": 0.0,
+            }
 
         return {
-            "plate": best_plate,
-            "confidence": best_score if best_plate else None,
-            "should_retry": should_retry,
-            "all_candidates": all_candidates,
+            "carplate_num": best_plate,
+            "confidence_percentage": round(best_score * 100, 2),
         }
