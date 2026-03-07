@@ -90,7 +90,7 @@ def qr_live(request, lot_number=None):
     if lot_number is not None and lot_number not in LOT_NUMBERS:
         lot_number = None
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
-    warning_seconds = int(request.GET.get("warning_seconds", "5")) or 5
+    warning_seconds = int(request.GET.get("warning_seconds", "30")) or 30
     timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
     return render(request, "evicted_frontend/qr_live.html", {
         "api_qr_status": api_base + "/qr-status/",
