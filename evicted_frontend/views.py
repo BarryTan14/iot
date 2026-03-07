@@ -5,6 +5,7 @@ from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from .models import ParkingSubmission, WorkflowTrigger
 from .mqtt_client import publish_sms_event, publish_trigger_event
@@ -89,11 +90,15 @@ def qr_live(request, lot_number=None):
     if lot_number is not None and lot_number not in LOT_NUMBERS:
         lot_number = None
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
+    warning_seconds = int(request.GET.get("warning_seconds", "5")) or 5
+    timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
     return render(request, "evicted_frontend/qr_live.html", {
         "api_qr_status": api_base + "/qr-status/",
         "api_alert_no_submission": api_base + "/alert-no-submission/",
         "poll_interval_ms": 3000,
         "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
+        "warning_seconds": warning_seconds,
+        "timer_initial": timer_initial,
         "lot_number": lot_number,
         "lot_numbers": lot_numbers,
         "lot_numbers_json": json.dumps(lot_numbers),
@@ -187,6 +192,7 @@ def last_trigger(request):
     return JsonResponse({"triggered_at": trigger.triggered_at.isoformat()})
 
 
+@csrf_exempt
 @require_POST
 def alert_no_submission(request):
     """
@@ -214,7 +220,7 @@ def alert_no_submission(request):
     if timezone.is_naive(triggered_at):
         triggered_at = timezone.make_aware(triggered_at)
     from datetime import timedelta
-    window = timedelta(seconds=5)
+    window = timedelta(seconds=30)
     trigger = WorkflowTrigger.objects.filter(
         lot_number=lot_number,
         triggered_at__gte=triggered_at - window,

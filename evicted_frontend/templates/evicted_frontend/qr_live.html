@@ -13,7 +13,7 @@
     <p>Scan a code to open the form for your lot.</p>
     {% endif %}
     <p id="qr-live-status" class="muted">Waiting for trigger…</p>
-    <p id="qr-live-timer" class="muted" style="display: none;">Submit form within: <strong id="qr-live-timer-value">2:00</strong></p>
+    <p id="qr-live-timer" class="muted" style="display: none;">Submit form within: <strong id="qr-live-timer-value">{{ timer_initial }}</strong></p>
     <div id="qr-live-codes" class="qr-grid" style="display: none;">
         {% for lot in lot_numbers %}
         <div class="qr-item" data-lot="{{ lot }}">
@@ -32,7 +32,7 @@
     const API_ALERT_NO_SUBMISSION = "{{ api_alert_no_submission|escapejs }}";
     const POLL_MS = {{ poll_interval_ms }};
     const RECENT_MINUTES = {{ recent_minutes }};
-    const WARNING_MS = 2 * 60 * 1000;
+    const WARNING_MS = {{ warning_seconds }} * 1000;
     const LOT_NUMBERS = {{ lot_numbers_json|safe }};
     const PAGE_LOT = {{ page_lot_json|safe }};
 
@@ -104,7 +104,7 @@
             countdownInterval = null;
         }
         if (timerEl) timerEl.style.display = "none";
-        if (timerValueEl) timerValueEl.textContent = "2:00";
+        if (timerValueEl) timerValueEl.textContent = "{{ timer_initial|escapejs }}";
     }
 
     function showQrCodes(lotUrls, triggeredAt) {
