@@ -70,6 +70,22 @@ def qr_page(request):
     return render(request, "evicted_frontend/qr_display.html", payload)
 
 
+def qr_live(request):
+    """
+    Live display page: polls the API and shows QR codes when the workflow was recently triggered.
+    Keep this page open (or embed in an iframe); when someone calls the trigger API, the QR codes
+    appear here within a few seconds. Optional query: ?minutes=10 (how long to show QR after trigger).
+    """
+    base = request.build_absolute_uri("/").rstrip("/")
+    api_base = base + "/api"
+    return render(request, "evicted_frontend/qr_live.html", {
+        "api_last_trigger": api_base + "/last-trigger/",
+        "api_qr_display": api_base + "/qr-display/",
+        "poll_interval_ms": 3000,
+        "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
+    })
+
+
 @require_http_methods(["GET", "POST"])
 def trigger_workflow(request):
     """

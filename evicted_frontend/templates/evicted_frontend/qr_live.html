@@ -1,0 +1,94 @@
+{% extends "evicted_frontend/base.html" %}
+{% load static %}
+{% block title %}QR live – Parking form{% endblock %}
+{% block content %}
+<section class="card" id="qr-live-section">
+    <h2>Parking form – scan to open</h2>
+    <p id="qr-live-status" class="muted">Waiting for trigger…</p>
+    <div id="qr-live-codes" class="qr-grid" style="display: none;">
+        <div class="qr-item">
+            <span class="qr-label">Lot 1</span>
+            <div id="qrcode-1" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 2</span>
+            <div id="qrcode-2" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 3</span>
+            <div id="qrcode-3" class="qrcode-container"></div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<script>
+(function() {
+    const API_LAST_TRIGGER = "{{ api_last_trigger|escapejs }}";
+    const API_QR_DISPLAY = "{{ api_qr_display|escapejs }}";
+    const POLL_MS = {{ poll_interval_ms }};
+    const RECENT_MINUTES = {{ recent_minutes }};
+
+    const statusEl = document.getElementById("qr-live-status");
+    const codesEl = document.getElementById("qr-live-codes");
+    const lots = [1, 2, 3];
+
+    function isRecent(triggeredAtIso) {
+        if (!triggeredAtIso) return false;
+        const t = new Date(triggeredAtIso).getTime();
+        const now = Date.now();
+        return (now - t) <= RECENT_MINUTES * 60 * 1000;
+    }
+
+    function drawQr(containerId, url) {
+        var container = document.getElementById(containerId);
+        if (!container || !url) return;
+        container.innerHTML = "";
+        var canvas = document.createElement("canvas");
+        QRCode.toCanvas(canvas, url, { width: 160 }, function(err) {
+            if (err) { container.textContent = "QR error"; return; }
+            container.appendChild(canvas);
+        });
+    }
+
+    function showQrCodes(lotUrls) {
+        if (typeof QRCode === "undefined" || !lotUrls) return;
+        codesEl.style.display = "";
+        statusEl.textContent = "Scan a code to open the parking form.";
+        lots.forEach(function(lot, i) {
+            drawQr("qrcode-" + (i + 1), lotUrls[String(lot)]);
+        });
+    }
+
+    function hideQrCodes() {
+        codesEl.style.display = "none";
+        statusEl.textContent = "Waiting for trigger…";
+        lots.forEach(function(_, i) {
+            var container = document.getElementById("qrcode-" + (i + 1));
+            if (container) container.innerHTML = "";
+        });
+    }
+
+    function poll() {
+        fetch(API_LAST_TRIGGER)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (isRecent(data.triggered_at)) {
+                    fetch(API_QR_DISPLAY)
+                        .then(function(r) { return r.json(); })
+                        .then(function(qrData) {
+                            if (qrData.ok && qrData.lot_urls) showQrCodes(qrData.lot_urls);
+                        });
+                } else {
+                    hideQrCodes();
+                }
+            })
+            .catch(function() {});
+    }
+
+    setInterval(poll, POLL_MS);
+    poll();
+})();
+</script>
+{% endblock %}
