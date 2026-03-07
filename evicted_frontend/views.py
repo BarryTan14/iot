@@ -356,3 +356,41 @@ def queue_sms(request):
         {"ok": False, "error": "Failed to publish to MQTT broker."},
         status=503,
     )
+
+
+@require_POST
+def update_time_car_left(request):
+    """
+    API: Update time_car_left for a parking submission by lot number.
+    Body (JSON or form): lot_number (required), time_car_left (ISO datetime, optional; default now).
+    Updates the most recent submission for that lot.
+    """
+    data, err = _parse_request_body(request)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+    if not data:
+        data = {}
+    lot_number = (data.get("lot_number") or "").strip()
+    if not lot_number:
+        return JsonResponse({"ok": False, "error": "lot_number is required."}, status=400)
+    submission = ParkingSubmission.objects.filter(lot_number=lot_number).first()
+    if not submission:
+        return JsonResponse({"ok": False, "error": "No submission found for that lot_number."}, status=404)
+    time_car_left_str = (data.get("time_car_left") or "").strip()
+    if time_car_left_str:
+        from django.utils.dateparse import parse_datetime, parse_date
+        time_car_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
+        if not time_car_left:
+            return JsonResponse({"ok": False, "error": "Invalid time_car_left."}, status=400)
+        if timezone.is_naive(time_car_left):
+            time_car_left = timezone.make_aware(time_car_left)
+    else:
+        time_car_left = timezone.now()
+    submission.time_car_left = time_car_left
+    submission.save(update_fields=["time_car_left"])
+    return JsonResponse({
+        "ok": True,
+        "id": submission.pk,
+        "lot_number": submission.lot_number,
+        "time_car_left": submission.time_car_left.isoformat(),
+    })

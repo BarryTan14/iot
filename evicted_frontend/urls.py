@@ -17,5 +17,6 @@ urlpatterns = [
     path("api/alert-no-submission/", views.alert_no_submission, name="alert_no_submission"),
     path("api/last-trigger/", views.last_trigger, name="last_trigger"),
     path("api/submit-form/", views.submit_form, name="submit_form"),
+    path("api/update-time-car-left/", views.update_time_car_left, name="update_time_car_left"),
     path("api/queue-sms/", views.queue_sms, name="queue_sms"),
 ]
