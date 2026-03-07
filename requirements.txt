@@ -4,3 +4,4 @@ python-dotenv>=1.0
 dj-database-url>=2.0
 gunicorn>=21.0
 whitenoise>=6.0
+paho-mqtt>=2.0

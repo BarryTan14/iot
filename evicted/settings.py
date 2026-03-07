@@ -158,3 +158,13 @@ STORAGES = {
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# MQTT broker for queuing SMS events (subscriber calls SMS API)
+# For HiveMQ Cloud: set MQTT_BROKER_HOST, MQTT_USE_TLS=1, and credentials (see docs/HIVEMQ_SETUP.md)
+MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "localhost")
+MQTT_BROKER_PORT = int(os.environ.get("MQTT_BROKER_PORT", "1883"))
+MQTT_USE_TLS = os.environ.get("MQTT_USE_TLS", "0").lower() in ("1", "true", "yes")
+MQTT_TOPIC_SMS = os.environ.get("MQTT_TOPIC_SMS", "evicted/sms/send")
+MQTT_CLIENT_ID = os.environ.get("MQTT_CLIENT_ID", "evicted-frontend")
+MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")

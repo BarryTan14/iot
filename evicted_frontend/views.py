@@ -1,9 +1,13 @@
+import json
+import re
+
 from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.utils import timezone
 from .models import ParkingSubmission, WorkflowTrigger
+from .mqtt_client import publish_sms_event
 
 
 def _get_database_name():
@@ -34,12 +38,88 @@ def success(request):
     return render(request, "evicted_frontend/success.html", {"database": database})
 
 
-@require_POST
+def _qr_display_payload(request):
+    """Build form_url, qr_page_url, and lot_urls for QR display (shared by API and page)."""
+    base = request.build_absolute_uri("/").rstrip("/")
+    form_url = request.build_absolute_uri("/form/")
+    qr_page_url = base + "/qr/"
+    lot_urls = {
+        str(i): f"{form_url}?lot={i}" for i in range(1, 4)
+    }
+    return {
+        "form_url": form_url,
+        "qr_page_url": qr_page_url,
+        "lot_urls": lot_urls,
+    }
+
+
+@require_GET
+def qr_display_api(request):
+    """
+    API: Get URLs needed to display the parking form QR codes.
+    Others can call this to get qr_page_url (open in browser/iframe) or form_url + lot_urls to render QR themselves.
+    """
+    payload = _qr_display_payload(request)
+    return JsonResponse({"ok": True, **payload})
+
+
+def qr_page(request):
+    """Minimal page that only shows QR codes for the form (for kiosks/iframes)."""
+    payload = _qr_display_payload(request)
+    payload["lot_urls_json"] = json.dumps(payload["lot_urls"])
+    return render(request, "evicted_frontend/qr_display.html", payload)
+
+
+@require_http_methods(["GET", "POST"])
 def trigger_workflow(request):
-    """API: Record current time as TimeParked (for testing)."""
+    """
+    API: Trigger workflow (GET or POST) and return data to display the QR code.
+    GET: Callable by anyone (e.g. links, other apps); no CSRF. Returns triggered_at + form_url, qr_page_url, lot_urls.
+    POST: Same, for form submissions from the staff page.
+    """
+    if request.method == "GET":
+        lot = request.GET.get("lot", "")
+        WorkflowTrigger.objects.create(lot_number=lot)
+        payload = _qr_display_payload(request)
+        return JsonResponse({
+            "ok": True,
+            "triggered_at": timezone.now().isoformat(),
+            **payload,
+        })
+    # POST
+    return trigger_workflow_post(request)
+
+
+@require_POST
+def trigger_workflow_post(request):
+    """API (POST): Record current time as TimeParked and return QR display data."""
     lot = request.POST.get("lot_number", "") or request.GET.get("lot", "")
     WorkflowTrigger.objects.create(lot_number=lot)
-    return JsonResponse({"ok": True, "triggered_at": timezone.now().isoformat()})
+    payload = _qr_display_payload(request)
+    return JsonResponse({
+        "ok": True,
+        "triggered_at": timezone.now().isoformat(),
+        **payload,
+    })
+
+
+def trigger_workflow(request):
+    """
+    API: Trigger workflow (GET or POST) and return data to display the QR code.
+    GET: Callable by anyone (e.g. links, other apps); no CSRF. Returns triggered_at + form_url, qr_page_url, lot_urls.
+    POST: Same, for form submissions from the staff page.
+    """
+    if request.method == "GET":
+        lot = request.GET.get("lot", "")
+        WorkflowTrigger.objects.create(lot_number=lot)
+        payload = _qr_display_payload(request)
+        return JsonResponse({
+            "ok": True,
+            "triggered_at": timezone.now().isoformat(),
+            **payload,
+        })
+    # POST
+    return trigger_workflow_post(request)
 
 
 @require_GET
@@ -102,3 +182,61 @@ def submit_form(request):
         })
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=500)
+
+
+def _parse_request_body(request):
+    """Get JSON or form body. Returns (data dict, error str or None)."""
+    content_type = (request.headers.get("Content-Type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            return json.loads(request.body or b"{}"), None
+        except json.JSONDecodeError as e:
+            return None, f"Invalid JSON: {e}"
+    data = getattr(request, "POST", None) and request.POST.dict()
+    if not data:
+        data = getattr(request, "GET", None) and request.GET.dict()
+    return data or {}, None
+
+
+@require_POST
+def queue_sms(request):
+    """
+    API: Queue an SMS by publishing an event to the MQTT broker.
+    A subscriber consumes the message and calls an SMS API.
+
+    Body (JSON or form): phone_number (required), message (optional), extra fields allowed.
+    """
+    data, err = _parse_request_body(request)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+    if not data:
+        data = {}
+
+    phone_number = (data.get("phone_number") or "").strip()
+    message = (data.get("message") or "You have a notification from Evicted service.").strip()
+
+    if not phone_number:
+        return JsonResponse(
+            {"ok": False, "error": "phone_number is required."},
+            status=400,
+        )
+
+    # Basic validation: digits, spaces, +, -
+    if not re.match(r"^[\d\s+\-()]{10,20}$", phone_number):
+        return JsonResponse(
+            {"ok": False, "error": "phone_number must be 10–20 digits/symbols."},
+            status=400,
+        )
+
+    extra = {k: v for k, v in data.items() if k not in ("phone_number", "message")}
+    if publish_sms_event(phone_number, message, **extra):
+        return JsonResponse({
+            "ok": True,
+            "queued": True,
+            "phone_number": phone_number,
+            "message": "SMS event published to broker.",
+        })
+    return JsonResponse(
+        {"ok": False, "error": "Failed to publish to MQTT broker."},
+        status=503,
+    )
