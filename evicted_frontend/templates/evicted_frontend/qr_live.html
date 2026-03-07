@@ -27,11 +27,13 @@
     const API_QR_STATUS = "{{ api_qr_status|escapejs }}";
     const POLL_MS = {{ poll_interval_ms }};
     const RECENT_MINUTES = {{ recent_minutes }};
+    const WARNING_MS = 2 * 60 * 1000;
     const LOT_NUMBERS = {{ lot_numbers_json|safe }};
     const PAGE_LOT = {{ page_lot_json|safe }};
 
     const statusEl = document.getElementById("qr-live-status");
     const codesEl = document.getElementById("qr-live-codes");
+    var noSubmitWarningTimer = null;
 
     function drawQr(containerId, url) {
         var container = document.getElementById(containerId);
@@ -44,16 +46,33 @@
         });
     }
 
+    function showNoSubmitAlert() {
+        var msg = "Form not submitted within 2 minutes. Please check if the user scanned and completed the form.";
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("Parking QR – No submission", { body: msg });
+        }
+        alert(msg);
+    }
+
     function showQrCodes(lotUrls) {
         if (typeof QRCode === "undefined" || !lotUrls) return;
+        if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
         codesEl.style.display = "";
         statusEl.textContent = "Scan a code to open the parking form.";
         LOT_NUMBERS.forEach(function(lot) {
             drawQr("qrcode-" + lot, lotUrls[String(lot)]);
         });
+        noSubmitWarningTimer = setTimeout(function() {
+            noSubmitWarningTimer = null;
+            if (codesEl.style.display !== "none") showNoSubmitAlert();
+        }, WARNING_MS);
     }
 
     function hideQrCodes() {
+        if (noSubmitWarningTimer) {
+            clearTimeout(noSubmitWarningTimer);
+            noSubmitWarningTimer = null;
+        }
         codesEl.style.display = "none";
         statusEl.textContent = "Waiting for trigger…";
         LOT_NUMBERS.forEach(function(lot) {
