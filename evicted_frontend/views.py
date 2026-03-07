@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.utils import timezone
 from .models import ParkingSubmission, WorkflowTrigger
-from .mqtt_client import publish_sms_event
+from .mqtt_client import publish_sms_event, publish_trigger_event
 
 
 def _get_database_name():
@@ -91,6 +91,7 @@ def qr_live(request, lot_number=None):
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
     return render(request, "evicted_frontend/qr_live.html", {
         "api_qr_status": api_base + "/qr-status/",
+        "api_alert_no_submission": api_base + "/alert-no-submission/",
         "poll_interval_ms": 3000,
         "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
         "lot_number": lot_number,
@@ -187,6 +188,53 @@ def last_trigger(request):
 
 
 @require_POST
+def alert_no_submission(request):
+    """
+    API: Called by the live page when the 2-minute timer expires without a form submission.
+    Publishes a no_submission event to the MQTT queue (e.g. to send staff an SMS).
+    Body (JSON): triggered_at (ISO string), lot_number (int or string).
+    """
+    data, err = _parse_request_body(request)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+    triggered_at_str = (data.get("triggered_at") or "").strip()
+    lot_number = data.get("lot_number")
+    if not triggered_at_str or lot_number is None:
+        return JsonResponse(
+            {"ok": False, "error": "triggered_at and lot_number are required."},
+            status=400,
+        )
+    lot_number = str(lot_number).strip()
+    if lot_number not in (str(n) for n in LOT_NUMBERS):
+        return JsonResponse({"ok": False, "error": "Invalid lot_number."}, status=400)
+    from django.utils.dateparse import parse_datetime
+    triggered_at = parse_datetime(triggered_at_str)
+    if not triggered_at:
+        return JsonResponse({"ok": False, "error": "Invalid triggered_at."}, status=400)
+    if timezone.is_naive(triggered_at):
+        triggered_at = timezone.make_aware(triggered_at)
+    from datetime import timedelta
+    window = timedelta(seconds=5)
+    trigger = WorkflowTrigger.objects.filter(
+        lot_number=lot_number,
+        triggered_at__gte=triggered_at - window,
+        triggered_at__lte=triggered_at + window,
+    ).first()
+    if not trigger:
+        return JsonResponse({"ok": False, "error": "Trigger not found or mismatch."}, status=400)
+    submission = ParkingSubmission.objects.filter(
+        lot_number=lot_number,
+        created_at__gt=triggered_at,
+    ).first()
+    if submission:
+        return JsonResponse({"ok": True, "already_submitted": True})
+    msg = f"Lot {lot_number}: Form not submitted within 2 minutes."
+    if publish_trigger_event("no_submission", lot_number, triggered_at.isoformat(), msg):
+        return JsonResponse({"ok": True, "published": True})
+    return JsonResponse({"ok": False, "error": "Failed to publish to MQTT."}, status=503)
+
+
+@require_POST
 def submit_form(request):
     """API: Submit the parking form."""
     try:
@@ -220,13 +268,20 @@ def submit_form(request):
             if time_car_left and timezone.is_naive(time_car_left):
                 time_car_left = timezone.make_aware(time_car_left)
 
-        ParkingSubmission.objects.create(
+        submission = ParkingSubmission.objects.create(
             carplate=carplate,
             name=name,
             time_parked=time_parked,
             time_car_left=time_car_left,
             phone=phone,
             lot_number=lot_number,
+        )
+        msg = f"Form submitted for lot {lot_number}."
+        publish_trigger_event(
+            "form_submitted",
+            lot_number,
+            submission.created_at.isoformat(),
+            msg,
         )
         db = _get_database_name()
         return JsonResponse({

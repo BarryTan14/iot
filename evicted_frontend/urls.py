@@ -14,6 +14,7 @@ urlpatterns = [
     path("qr/live/", views.qr_live, name="qr_live"),
     path("qr/live/<int:lot_number>/", views.qr_live, name="qr_live_lot"),
     path("api/qr-status/", views.qr_status, name="qr_status"),
+    path("api/alert-no-submission/", views.alert_no_submission, name="alert_no_submission"),
     path("api/last-trigger/", views.last_trigger, name="last_trigger"),
     path("api/submit-form/", views.submit_form, name="submit_form"),
     path("api/queue-sms/", views.queue_sms, name="queue_sms"),

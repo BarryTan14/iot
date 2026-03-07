@@ -1,6 +1,6 @@
-# HiveMQ Cloud setup for Evicted SMS queue
+# HiveMQ Cloud setup for Evicted event queue
 
-This guide connects the Evicted service to **HiveMQ Cloud** so SMS events are published to a hosted MQTT broker. A separate subscriber can then consume messages and call your SMS API.
+This guide connects the Evicted service to **HiveMQ Cloud** so events are published to a hosted MQTT broker. **Someone else subscribes to your queue** and handles the messages on their side (e.g. SMS, integrations, or any other action). You only publish; the subscriber decides what to do.
 
 ## 1. Create a HiveMQ Cloud cluster
 
@@ -41,7 +41,7 @@ MQTT_USERNAME=your_username
 MQTT_PASSWORD=your_password
 
 # Optional: topic and client id (defaults are fine)
-# MQTT_TOPIC_SMS=evicted/sms/send
+# MQTT_TOPIC_FORM=evicted/form
 # MQTT_CLIENT_ID=evicted-frontend
 ```
 
@@ -55,26 +55,17 @@ Restart the Evicted app after changing env vars.
 ## 4. Verify the connection
 
 1. Start the Evicted app.
-2. Publish an SMS event:
+2. Publish a test message (e.g. via the queue-sms API or by triggering the workflow and submitting or not submitting the form).
+3. In HiveMQ Cloud, open **Web UI** (or **Monitoring** → **Topics**) and check that messages appear on topic `evicted/sms/send`. Your subscriber will receive the same messages when they subscribe to that topic.
 
-```bash
-curl -X POST http://localhost:8000/api/queue-sms/ \
-  -H "Content-Type: application/json" \
-  -d '{"phone_number": "+15551234567", "message": "Test from Evicted"}'
-```
+## 5. Subscriber (their side)
 
-3. In HiveMQ Cloud, open **Web UI** (or **Monitoring** → **Topics**) and check that messages appear on topic `evicted/sms/send`.
+The party subscribing to your queue should:
 
-## 5. Subscriber (SMS sender)
+1. Connect to the **same** HiveMQ Cloud broker (same host, port 8883, TLS, with credentials that have subscribe permission).
+2. Subscribe to topic: **`evicted/form`** (or whatever you set in `MQTT_TOPIC_FORM`).
+3. On each message, parse the JSON payload and do whatever they need (SMS, webhooks, their own logic, etc.).
 
-Your SMS-sending service should:
+Payloads include fields such as `phone_number`, `message`, `type` (e.g. `form_submitted`, `no_submission`), `lot_number`, `timestamp`. The subscriber uses these as they see fit.
 
-1. Connect to the **same** HiveMQ Cloud broker (same host, port 8883, TLS, same user or another user with subscribe rights).
-2. Subscribe to topic: `evicted/sms/send` (or your `MQTT_TOPIC_SMS` value).
-3. On each message, parse the JSON payload and call your SMS API:
-
-```json
-{"phone_number": "+15551234567", "message": "Your car is ready."}
-```
-
-Optional: use HiveMQ Cloud’s **Shared Subscriptions** if you run multiple subscriber instances for load balancing.
+Optional: they can use HiveMQ Cloud’s **Shared Subscriptions** if they run multiple subscriber instances.

@@ -31,7 +31,7 @@ def publish_sms_event(phone_number: str, message: str, **extra) -> bool:
         "message": message,
         **extra,
     }
-    topic = getattr(settings, "MQTT_TOPIC_SMS", "evicted/sms/send")
+    topic = getattr(settings, "MQTT_TOPIC_FORM", "evicted/form")
     host = getattr(settings, "MQTT_BROKER_HOST", "localhost")
     port = int(getattr(settings, "MQTT_BROKER_PORT", 1883))
     use_tls = getattr(settings, "MQTT_USE_TLS", False)
@@ -61,3 +61,23 @@ def publish_sms_event(phone_number: str, message: str, **extra) -> bool:
     except Exception as e:
         logger.exception("MQTT publish error: %s", e)
         return False
+
+
+def publish_trigger_event(
+    event_type: str,
+    lot_number: str,
+    timestamp: str,
+    message: str,
+) -> bool:
+    """
+    Publish a trigger-related event to the MQTT queue (no_submission or form_submitted).
+    Uses MQTT_ALERT_PHONE if set so the subscriber can send an SMS to staff.
+    """
+    phone = getattr(settings, "MQTT_ALERT_PHONE", None) or ""
+    return publish_sms_event(
+        phone or "alert",
+        message,
+        type=event_type,
+        lot_number=str(lot_number),
+        timestamp=timestamp,
+    )

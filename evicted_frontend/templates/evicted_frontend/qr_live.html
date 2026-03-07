@@ -1,6 +1,9 @@
 {% extends "evicted_frontend/base.html" %}
 {% load static %}
 {% block title %}QR live – Lot {{ lot_number|default:"all" }}{% endblock %}
+{% block extra_head %}
+<meta name="csrf-token" content="{{ csrf_token }}">
+{% endblock %}
 {% block content %}
 <section class="card" id="qr-live-section">
     <h2>Parking form – scan to open</h2>
@@ -26,6 +29,7 @@
 <script>
 (function() {
     const API_QR_STATUS = "{{ api_qr_status|escapejs }}";
+    const API_ALERT_NO_SUBMISSION = "{{ api_alert_no_submission|escapejs }}";
     const POLL_MS = {{ poll_interval_ms }};
     const RECENT_MINUTES = {{ recent_minutes }};
     const WARNING_MS = 2 * 60 * 1000;
@@ -38,6 +42,7 @@
     const timerValueEl = document.getElementById("qr-live-timer-value");
     var noSubmitWarningTimer = null;
     var countdownInterval = null;
+    var currentTriggeredAt = null;
 
     function drawQr(containerId, url) {
         var container = document.getElementById(containerId);
@@ -59,6 +64,15 @@
     }
 
     function showNoSubmitAlert() {
+        if (PAGE_LOT !== null && currentTriggeredAt) {
+            var csrf = document.querySelector('meta[name="csrf-token"]');
+            var token = csrf ? csrf.getAttribute('content') : '';
+            fetch(API_ALERT_NO_SUBMISSION, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": token || "" },
+                body: JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT }),
+            }).catch(function() {});
+        }
         var msg = "Form not submitted within 2 minutes. Please check if the user scanned and completed the form.";
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             new Notification("Parking QR – No submission", { body: msg });
@@ -93,9 +107,10 @@
         if (timerValueEl) timerValueEl.textContent = "2:00";
     }
 
-    function showQrCodes(lotUrls) {
+    function showQrCodes(lotUrls, triggeredAt) {
         if (typeof QRCode === "undefined" || !lotUrls) return;
         var wasHidden = codesEl.style.display === "none";
+        if (triggeredAt) currentTriggeredAt = triggeredAt;
         if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
         codesEl.style.display = "";
         statusEl.textContent = "Scan a code to open the parking form.";
@@ -113,6 +128,7 @@
     }
 
     function hideQrCodes() {
+        currentTriggeredAt = null;
         if (noSubmitWarningTimer) {
             clearTimeout(noSubmitWarningTimer);
             noSubmitWarningTimer = null;
@@ -140,7 +156,7 @@
             .then(function(data) {
                 var ok = data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot);
                 if (ok) {
-                    showQrCodes(data.lot_urls);
+                    showQrCodes(data.lot_urls, data.triggered_at);
                 } else {
                     hideQrCodes();
                 }
