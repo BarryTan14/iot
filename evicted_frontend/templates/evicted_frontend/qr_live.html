@@ -129,13 +129,13 @@
         var wasHidden = codesEl.style.display === "none";
         if (triggeredAt) currentTriggeredAt = triggeredAt;
         console.log("[QR live] showQrCodes", { wasHidden: wasHidden, triggeredAt: triggeredAt, currentTriggeredAt: currentTriggeredAt });
-        if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
         codesEl.style.display = "";
         statusEl.textContent = "Scan a code to open the parking form.";
         LOT_NUMBERS.forEach(function(lot) {
             drawQr("qrcode-" + lot, lotUrls[String(lot)]);
         });
         if (wasHidden) {
+            if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
             console.log("[QR live] starting timer", WARNING_MS, "ms");
             startCountdown(Date.now() + WARNING_MS);
             noSubmitWarningTimer = setTimeout(function() {
