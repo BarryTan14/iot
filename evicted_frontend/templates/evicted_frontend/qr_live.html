@@ -26,15 +26,18 @@
 {% endblock %}
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+{{ qr_live_config|json_script:"qr-live-config" }}
 <script>
 (function() {
-    const API_QR_STATUS = "{{ api_qr_status|escapejs }}";
-    const API_ALERT_NO_SUBMISSION = "{{ api_alert_no_submission|escapejs }}";
-    const POLL_MS = {{ poll_interval_ms }};
-    const RECENT_MINUTES = {{ recent_minutes }};
-    const WARNING_MS = {{ warning_seconds }} * 1000;
-    const LOT_NUMBERS = {{ lot_numbers_json|safe }};
-    const PAGE_LOT = {{ page_lot_json|safe }};
+    var raw = document.getElementById("qr-live-config");
+    var CONFIG = raw ? JSON.parse(raw.textContent) : {};
+    var API_QR_STATUS = CONFIG.api_qr_status || "";
+    var API_ALERT_NO_SUBMISSION = CONFIG.api_alert_no_submission || "";
+    var POLL_MS = CONFIG.poll_interval_ms || 3000;
+    var RECENT_MINUTES = CONFIG.recent_minutes || 10;
+    var WARNING_MS = (CONFIG.warning_seconds || 120) * 1000;
+    var LOT_NUMBERS = CONFIG.lot_numbers || [1, 2, 3];
+    var PAGE_LOT = CONFIG.page_lot;
 
     console.log("[QR live] init", { PAGE_LOT: PAGE_LOT, WARNING_MS: WARNING_MS, API_ALERT_NO_SUBMISSION: API_ALERT_NO_SUBMISSION });
 
@@ -121,7 +124,7 @@
             countdownInterval = null;
         }
         if (timerEl) timerEl.style.display = "none";
-        if (timerValueEl) timerValueEl.textContent = "{{ timer_initial|escapejs }}";
+        if (timerValueEl) timerValueEl.textContent = CONFIG.timer_initial || "2:00";
     }
 
     function showQrCodes(lotUrls, triggeredAt) {
@@ -191,3 +194,4 @@
 })();
 </script>
 {% endblock %}
+

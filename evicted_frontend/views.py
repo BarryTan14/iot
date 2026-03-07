@@ -90,19 +90,23 @@ def qr_live(request, lot_number=None):
     if lot_number is not None and lot_number not in LOT_NUMBERS:
         lot_number = None
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
-    warning_seconds = int(request.GET.get("warning_seconds", "30")) or 30
+    warning_seconds = int(request.GET.get("warning_seconds", "120")) or 120
     timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
-    return render(request, "evicted_frontend/qr_live.html", {
+    qr_live_config = {
         "api_qr_status": api_base + "/qr-status/",
         "api_alert_no_submission": api_base + "/alert-no-submission/",
         "poll_interval_ms": 3000,
         "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
         "warning_seconds": warning_seconds,
         "timer_initial": timer_initial,
+        "lot_numbers": lot_numbers,
+        "page_lot": lot_number,
+    }
+    return render(request, "evicted_frontend/qr_live.html", {
+        "qr_live_config": qr_live_config,
+        "timer_initial": timer_initial,
         "lot_number": lot_number,
         "lot_numbers": lot_numbers,
-        "lot_numbers_json": json.dumps(lot_numbers),
-        "page_lot_json": json.dumps(lot_number),
     })
 
 
