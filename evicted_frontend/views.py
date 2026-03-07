@@ -38,18 +38,23 @@ def success(request):
     return render(request, "evicted_frontend/success.html", {"database": database})
 
 
+LOT_NUMBERS = [1, 2, 3]
+
+
 def _qr_display_payload(request):
-    """Build form_url, qr_page_url, and lot_urls for QR display (shared by API and page)."""
+    """Build form_url, qr_page_url, lot_urls, and lot-specific live URLs for QR display."""
     base = request.build_absolute_uri("/").rstrip("/")
     form_url = request.build_absolute_uri("/form/")
     qr_page_url = base + "/qr/"
-    lot_urls = {
-        str(i): f"{form_url}?lot={i}" for i in range(1, 4)
-    }
+    qr_live_url = base + "/qr/live/"
+    lot_urls = {str(i): f"{form_url}?lot={i}" for i in LOT_NUMBERS}
+    qr_live_url_by_lot = {str(i): f"{base}/qr/live/{i}/" for i in LOT_NUMBERS}
     return {
         "form_url": form_url,
         "qr_page_url": qr_page_url,
+        "qr_live_url": qr_live_url,
         "lot_urls": lot_urls,
+        "qr_live_url_by_lot": qr_live_url_by_lot,
     }
 
 
@@ -70,19 +75,27 @@ def qr_page(request):
     return render(request, "evicted_frontend/qr_display.html", payload)
 
 
-def qr_live(request):
+def qr_live(request, lot_number=None):
     """
-    Live display page: polls the API and shows QR codes when the workflow was recently triggered.
-    Keep this page open (or embed in an iframe); when someone calls the trigger API, the QR codes
-    appear here within a few seconds. Optional query: ?minutes=10 (how long to show QR after trigger).
+    Live display page: polls the API and shows QR code(s) when the workflow was recently triggered.
+    - /qr/live/ : show all lots (1, 2, 3).
+    - /qr/live/<lot_number>/ : show only that lot (e.g. for a kiosk dedicated to lot 2).
+    Resets to "Waiting for trigger…" when a form is submitted (after someone scans and submits).
+    Optional query: ?minutes=10 (how long to show QR after trigger before considering expired).
     """
     base = request.build_absolute_uri("/").rstrip("/")
     api_base = base + "/api"
+    lot_number = int(lot_number) if lot_number is not None and str(lot_number).isdigit() else None
+    if lot_number is not None and lot_number not in LOT_NUMBERS:
+        lot_number = None
+    lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
     return render(request, "evicted_frontend/qr_live.html", {
-        "api_last_trigger": api_base + "/last-trigger/",
-        "api_qr_display": api_base + "/qr-display/",
+        "api_qr_status": api_base + "/qr-status/",
         "poll_interval_ms": 3000,
         "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
+        "lot_number": lot_number,
+        "lot_numbers": lot_numbers,
+        "lot_numbers_json": json.dumps(lot_numbers),
     })
 
 
@@ -119,23 +132,34 @@ def trigger_workflow_post(request):
     })
 
 
-def trigger_workflow(request):
+@require_GET
+def qr_status(request):
     """
-    API: Trigger workflow (GET or POST) and return data to display the QR code.
-    GET: Callable by anyone (e.g. links, other apps); no CSRF. Returns triggered_at + form_url, qr_page_url, lot_urls.
-    POST: Same, for form submissions from the staff page.
+    API: Whether the live page should show QR codes. Used by /qr/live/ to poll.
+    show_qr is True only if there was a recent trigger AND no form submission since that trigger.
+    When someone submits the form (after scanning), show_qr becomes False so the live page resets.
     """
-    if request.method == "GET":
-        lot = request.GET.get("lot", "")
-        WorkflowTrigger.objects.create(lot_number=lot)
-        payload = _qr_display_payload(request)
-        return JsonResponse({
-            "ok": True,
-            "triggered_at": timezone.now().isoformat(),
-            **payload,
-        })
-    # POST
-    return trigger_workflow_post(request)
+    recent_minutes = int(request.GET.get("minutes", "10")) or 10
+    trigger = WorkflowTrigger.objects.first()
+    submission = ParkingSubmission.objects.first()
+    payload = _qr_display_payload(request)
+    if not trigger:
+        return JsonResponse({"show_qr": False, "triggered_at": None, **payload})
+    triggered_at = trigger.triggered_at
+    # Consider trigger "consumed" if a submission happened after it (user scanned and submitted)
+    submitted_after_trigger = (
+        submission is not None and submission.created_at > triggered_at
+    )
+    cutoff = timezone.now() - timezone.timedelta(minutes=recent_minutes)
+    trigger_recent = triggered_at >= cutoff
+    show_qr = trigger_recent and not submitted_after_trigger
+    response = {
+        "show_qr": show_qr,
+        "triggered_at": triggered_at.isoformat(),
+        "recent_minutes": recent_minutes,
+        **payload,
+    }
+    return JsonResponse(response)
 
 
 @require_GET
