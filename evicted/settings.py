@@ -41,6 +41,9 @@ CSRF_TRUSTED_ORIGINS = [
     "https://*.up.railway.app",
 ]
 
+# Behind a reverse proxy (e.g. Railway), the request scheme is HTTP; the proxy sets X-Forwarded-Proto.
+# This makes Django use HTTPS for build_absolute_uri() so API URLs in templates are HTTPS (avoids mixed content).
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # Application definition
 
