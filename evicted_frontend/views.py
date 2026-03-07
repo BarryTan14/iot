@@ -173,6 +173,10 @@ def qr_status(request):
     cutoff = timezone.now() - timezone.timedelta(minutes=recent_minutes)
     trigger_recent = triggered_at >= cutoff
     show_qr = trigger_recent and not submitted_after_trigger
+    if show_qr and triggered_lot is not None:
+        lot_submission = ParkingSubmission.objects.filter(lot_number=str(triggered_lot)).first()
+        if lot_submission is not None and lot_submission.time_car_left is not None:
+            show_qr = False
     response = {
         "show_qr": show_qr,
         "triggered_at": triggered_at.isoformat(),
