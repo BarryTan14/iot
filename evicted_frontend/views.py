@@ -96,6 +96,7 @@ def qr_live(request, lot_number=None):
         "lot_number": lot_number,
         "lot_numbers": lot_numbers,
         "lot_numbers_json": json.dumps(lot_numbers),
+        "page_lot_json": json.dumps(lot_number),
     })
 
 
@@ -132,11 +133,24 @@ def trigger_workflow_post(request):
     })
 
 
+def _triggered_lot_from_trigger(trigger):
+    """Return the triggered lot as int (1–3) or None if not set/invalid."""
+    if not trigger or not trigger.lot_number:
+        return None
+    raw = str(trigger.lot_number).strip()
+    if raw and raw.isdigit():
+        n = int(raw)
+        if n in LOT_NUMBERS:
+            return n
+    return None
+
+
 @require_GET
 def qr_status(request):
     """
     API: Whether the live page should show QR codes. Used by /qr/live/ to poll.
     show_qr is True only if there was a recent trigger AND no form submission since that trigger.
+    triggered_lot: when the trigger had ?lot=1 (or 2/3), only the matching /qr/live/<n>/ page may show QR.
     When someone submits the form (after scanning), show_qr becomes False so the live page resets.
     """
     recent_minutes = int(request.GET.get("minutes", "10")) or 10
@@ -144,9 +158,9 @@ def qr_status(request):
     submission = ParkingSubmission.objects.first()
     payload = _qr_display_payload(request)
     if not trigger:
-        return JsonResponse({"show_qr": False, "triggered_at": None, **payload})
+        return JsonResponse({"show_qr": False, "triggered_at": None, "triggered_lot": None, **payload})
     triggered_at = trigger.triggered_at
-    # Consider trigger "consumed" if a submission happened after it (user scanned and submitted)
+    triggered_lot = _triggered_lot_from_trigger(trigger)
     submitted_after_trigger = (
         submission is not None and submission.created_at > triggered_at
     )
@@ -156,6 +170,7 @@ def qr_status(request):
     response = {
         "show_qr": show_qr,
         "triggered_at": triggered_at.isoformat(),
+        "triggered_lot": triggered_lot,
         "recent_minutes": recent_minutes,
         **payload,
     }

@@ -28,6 +28,7 @@
     const POLL_MS = {{ poll_interval_ms }};
     const RECENT_MINUTES = {{ recent_minutes }};
     const LOT_NUMBERS = {{ lot_numbers_json|safe }};
+    const PAGE_LOT = {{ page_lot_json|safe }};
 
     const statusEl = document.getElementById("qr-live-status");
     const codesEl = document.getElementById("qr-live-codes");
@@ -61,12 +62,20 @@
         });
     }
 
+    function shouldShowForThisPage(triggeredLot) {
+        if (PAGE_LOT === null) {
+            return triggeredLot === null;
+        }
+        return triggeredLot === PAGE_LOT;
+    }
+
     function poll() {
         var url = API_QR_STATUS + "?minutes=" + RECENT_MINUTES;
         fetch(url)
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (data.show_qr && data.lot_urls) {
+                var ok = data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot);
+                if (ok) {
                     showQrCodes(data.lot_urls);
                 } else {
                     hideQrCodes();
