@@ -36,6 +36,8 @@
     const LOT_NUMBERS = {{ lot_numbers_json|safe }};
     const PAGE_LOT = {{ page_lot_json|safe }};
 
+    console.log("[QR live] init", { PAGE_LOT: PAGE_LOT, WARNING_MS: WARNING_MS, API_ALERT_NO_SUBMISSION: API_ALERT_NO_SUBMISSION });
+
     const statusEl = document.getElementById("qr-live-status");
     const codesEl = document.getElementById("qr-live-codes");
     const timerEl = document.getElementById("qr-live-timer");
@@ -64,14 +66,29 @@
     }
 
     function showNoSubmitAlert() {
+        console.log("[QR live] showNoSubmitAlert called", { PAGE_LOT: PAGE_LOT, currentTriggeredAt: currentTriggeredAt });
         if (PAGE_LOT !== null && currentTriggeredAt) {
             var csrf = document.querySelector('meta[name="csrf-token"]');
             var token = csrf ? csrf.getAttribute('content') : '';
+            var body = JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT });
+            console.log("[QR live] calling alert API", API_ALERT_NO_SUBMISSION, body);
             fetch(API_ALERT_NO_SUBMISSION, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": token || "" },
-                body: JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT }),
-            }).catch(function() {});
+                body: body,
+            })
+                .then(function(r) {
+                    console.log("[QR live] alert API response", r.status, r.statusText);
+                    return r.json();
+                })
+                .then(function(data) {
+                    console.log("[QR live] alert API data", data);
+                })
+                .catch(function(err) {
+                    console.log("[QR live] alert API error", err);
+                });
+        } else {
+            console.log("[QR live] skipping alert API (PAGE_LOT or currentTriggeredAt missing)");
         }
         var msg = "Form not submitted within 2 minutes. Please check if the user scanned and completed the form.";
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -111,6 +128,7 @@
         if (typeof QRCode === "undefined" || !lotUrls) return;
         var wasHidden = codesEl.style.display === "none";
         if (triggeredAt) currentTriggeredAt = triggeredAt;
+        console.log("[QR live] showQrCodes", { wasHidden: wasHidden, triggeredAt: triggeredAt, currentTriggeredAt: currentTriggeredAt });
         if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
         codesEl.style.display = "";
         statusEl.textContent = "Scan a code to open the parking form.";
@@ -118,8 +136,10 @@
             drawQr("qrcode-" + lot, lotUrls[String(lot)]);
         });
         if (wasHidden) {
+            console.log("[QR live] starting timer", WARNING_MS, "ms");
             startCountdown(Date.now() + WARNING_MS);
             noSubmitWarningTimer = setTimeout(function() {
+                console.log("[QR live] timer fired");
                 noSubmitWarningTimer = null;
                 stopCountdown();
                 if (codesEl.style.display !== "none") showNoSubmitAlert();
@@ -161,7 +181,9 @@
                     hideQrCodes();
                 }
             })
-            .catch(function() {});
+            .catch(function(err) {
+                console.log("[QR live] poll error", err);
+            });
     }
 
     setInterval(poll, POLL_MS);
