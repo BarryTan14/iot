@@ -10,6 +10,7 @@
     <p>Scan a code to open the form for your lot.</p>
     {% endif %}
     <p id="qr-live-status" class="muted">Waiting for trigger…</p>
+    <p id="qr-live-timer" class="muted" style="display: none;">Submit form within: <strong id="qr-live-timer-value">2:00</strong></p>
     <div id="qr-live-codes" class="qr-grid" style="display: none;">
         {% for lot in lot_numbers %}
         <div class="qr-item" data-lot="{{ lot }}">
@@ -33,7 +34,10 @@
 
     const statusEl = document.getElementById("qr-live-status");
     const codesEl = document.getElementById("qr-live-codes");
+    const timerEl = document.getElementById("qr-live-timer");
+    const timerValueEl = document.getElementById("qr-live-timer-value");
     var noSubmitWarningTimer = null;
+    var countdownInterval = null;
 
     function drawQr(containerId, url) {
         var container = document.getElementById(containerId);
@@ -46,12 +50,47 @@
         });
     }
 
+    function formatCountdown(ms) {
+        if (ms <= 0) return "0:00";
+        var s = Math.ceil(ms / 1000);
+        var m = Math.floor(s / 60);
+        s = s % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
     function showNoSubmitAlert() {
         var msg = "Form not submitted within 2 minutes. Please check if the user scanned and completed the form.";
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             new Notification("Parking QR – No submission", { body: msg });
         }
         alert(msg);
+    }
+
+    function startCountdown(endAt) {
+        if (countdownInterval) clearInterval(countdownInterval);
+        if (!timerEl || !timerValueEl) return;
+        timerEl.style.display = "";
+        function tick() {
+            var left = endAt - Date.now();
+            if (left <= 0) {
+                timerValueEl.textContent = "0:00";
+                if (countdownInterval) clearInterval(countdownInterval);
+                countdownInterval = null;
+                return;
+            }
+            timerValueEl.textContent = formatCountdown(left);
+        }
+        tick();
+        countdownInterval = setInterval(tick, 1000);
+    }
+
+    function stopCountdown() {
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+        if (timerEl) timerEl.style.display = "none";
+        if (timerValueEl) timerValueEl.textContent = "2:00";
     }
 
     function showQrCodes(lotUrls) {
@@ -62,8 +101,10 @@
         LOT_NUMBERS.forEach(function(lot) {
             drawQr("qrcode-" + lot, lotUrls[String(lot)]);
         });
+        startCountdown(Date.now() + WARNING_MS);
         noSubmitWarningTimer = setTimeout(function() {
             noSubmitWarningTimer = null;
+            stopCountdown();
             if (codesEl.style.display !== "none") showNoSubmitAlert();
         }, WARNING_MS);
     }
@@ -73,6 +114,7 @@
             clearTimeout(noSubmitWarningTimer);
             noSubmitWarningTimer = null;
         }
+        stopCountdown();
         codesEl.style.display = "none";
         statusEl.textContent = "Waiting for trigger…";
         LOT_NUMBERS.forEach(function(lot) {
