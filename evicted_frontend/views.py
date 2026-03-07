@@ -358,6 +358,7 @@ def queue_sms(request):
     )
 
 
+@csrf_exempt
 @require_POST
 def update_time_car_left(request):
     """
