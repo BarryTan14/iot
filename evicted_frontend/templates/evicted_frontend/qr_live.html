@@ -95,18 +95,21 @@
 
     function showQrCodes(lotUrls) {
         if (typeof QRCode === "undefined" || !lotUrls) return;
+        var wasHidden = codesEl.style.display === "none";
         if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
         codesEl.style.display = "";
         statusEl.textContent = "Scan a code to open the parking form.";
         LOT_NUMBERS.forEach(function(lot) {
             drawQr("qrcode-" + lot, lotUrls[String(lot)]);
         });
-        startCountdown(Date.now() + WARNING_MS);
-        noSubmitWarningTimer = setTimeout(function() {
-            noSubmitWarningTimer = null;
-            stopCountdown();
-            if (codesEl.style.display !== "none") showNoSubmitAlert();
-        }, WARNING_MS);
+        if (wasHidden) {
+            startCountdown(Date.now() + WARNING_MS);
+            noSubmitWarningTimer = setTimeout(function() {
+                noSubmitWarningTimer = null;
+                stopCountdown();
+                if (codesEl.style.display !== "none") showNoSubmitAlert();
+            }, WARNING_MS);
+        }
     }
 
     function hideQrCodes() {
