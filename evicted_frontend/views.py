@@ -178,11 +178,12 @@ def qr_status(request):
     trigger_recent = triggered_at >= cutoff
     show_qr = trigger_recent and not submitted_after_trigger
     if show_qr and triggered_lot is not None:
-        lot_submission_after = ParkingSubmission.objects.filter(
-            lot_number=str(triggered_lot),
-            created_at__gt=triggered_at,
-        ).first()
-        if lot_submission_after is not None and lot_submission_after.time_car_left is not None:
+        lot_submission = ParkingSubmission.objects.filter(lot_number=str(triggered_lot)).first()
+        if (
+            lot_submission is not None
+            and lot_submission.time_car_left is not None
+            and lot_submission.time_car_left >= triggered_at
+        ):
             show_qr = False
     response = {
         "show_qr": show_qr,
