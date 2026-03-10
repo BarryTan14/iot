@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import EVLot, Car, WorkflowTrigger
+from .models import EVLot, Car, ParkingLot, WorkflowTrigger
 from .mqtt_client import publish_sms_event, publish_trigger_event
 from .consumers import qr_lot_group_name
 
@@ -21,14 +21,19 @@ def _get_database_name():
 
 
 def index(request):
-    """Main page: trigger workflow button + QR code for form + EV Lots and Cars tables."""
+    """Main page: trigger workflow button + QR code for form + EV Lots, Cars, and Parking lots tables."""
     form_url = request.build_absolute_uri("/form/")
     ev_lots = EVLot.objects.all()[:50]
     cars = Car.objects.all()[:50]
+    # Ensure lots 1–3 exist for display; show all parking lots ordered by lot_number
+    for n in LOT_NUMBERS:
+        ParkingLot.objects.get_or_create(lot_number=str(n), defaults={"occupied": False})
+    parking_lots = ParkingLot.objects.all().order_by("lot_number")
     return render(request, "evicted_frontend/index.html", {
         "form_url": form_url,
         "ev_lots": ev_lots,
         "cars": cars,
+        "parking_lots": parking_lots,
     })
 
 
@@ -131,6 +136,11 @@ def trigger_workflow(request):
     if request.method == "GET":
         lot = request.GET.get("lot", "")
         WorkflowTrigger.objects.create(lot_number=lot)
+        _check_on_trigger_lot(lot)
+        try:
+            _check_full_lots_and_notify_longest_ice()
+        except Exception:
+            pass  # Don't fail trigger if SMS/lot check fails
         payload = _qr_display_payload(request)
         triggered_at = timezone.now().isoformat()
         triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
@@ -145,12 +155,82 @@ def trigger_workflow_post(request):
     """API (POST): Record current time as TimeParked and return QR display data."""
     lot = request.POST.get("lot_number", "") or request.GET.get("lot", "")
     WorkflowTrigger.objects.create(lot_number=lot)
+    _check_on_trigger_lot(lot)
+    try:
+        _check_full_lots_and_notify_longest_ice()
+    except Exception:
+        pass  # Don't fail trigger if SMS/lot check fails
     payload = _qr_display_payload(request)
     triggered_at = timezone.now().isoformat()
     triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
     ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
     _send_qr_trigger_websocket(lot, ws_payload)
     return JsonResponse({"ok": True, "triggered_at": triggered_at, **payload})
+
+
+def _check_on_trigger_lot(lot_number):
+    """
+    Called when trigger_lot (trigger_workflow) is invoked. Ensures ParkingLot exists
+    for the given lot and returns current occupied status (for logging or downstream use).
+    """
+    if not lot_number or not str(lot_number).strip():
+        return None
+    lot_str = str(lot_number).strip()
+    if lot_str not in (str(n) for n in LOT_NUMBERS):
+        return None
+    parking_lot, _ = ParkingLot.objects.get_or_create(
+        lot_number=lot_str,
+        defaults={"occupied": False},
+    )
+    return {"lot_number": lot_str, "occupied": parking_lot.occupied}
+
+
+def _send_sms_to_phone(phone_number: str, message: str) -> bool:
+    """
+    Send an SMS to the given phone number by publishing an event to the MQTT broker.
+    A subscriber consumes the message and performs the actual SMS delivery.
+    """
+    return publish_sms_event(phone_number, message)
+
+
+def _check_full_lots_and_notify_longest_ice():
+    """
+    After trigger_lot: if all lots are filled, check for ICE cars. If any ICE car is parked,
+    find the one parked the longest, get their phone from EV Lots, and send an SMS to that number.
+    """
+    # 1. Check if all lots (1, 2, 3) are occupied
+    for n in LOT_NUMBERS:
+        pl = ParkingLot.objects.filter(lot_number=str(n)).first()
+        if not pl or not pl.occupied:
+            return
+    # 2. Get current occupant per lot (most recent EVLot for that lot with time_left null)
+    current_occupants = []
+    for n in LOT_NUMBERS:
+        ev_lot = (
+            EVLot.objects.filter(lot_number=str(n), time_left__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        if ev_lot:
+            current_occupants.append(ev_lot)
+    # 3. Filter to those whose carplate is ICE in Car table
+    ice_occupants = []
+    for ev_lot in current_occupants:
+        if Car.objects.filter(carplate__iexact=ev_lot.carplate, type="ICE").exists():
+            ice_occupants.append(ev_lot)
+    if not ice_occupants:
+        return
+    # 4. Among ICE cars, the one parked longest has the earliest time_parked
+    longest_parked = min(ice_occupants, key=lambda o: o.time_parked)
+    phone = (longest_parked.phone or "").strip()
+    if not phone:
+        return
+    # 5. Send SMS to that phone number
+    message = (
+        "Your vehicle has been parked in an EV lot for the longest time among ICE vehicles. "
+        "Please move your car to allow EV charging. Thank you."
+    )
+    _send_sms_to_phone(phone, message)
 
 
 def _send_qr_trigger_websocket(lot_str, payload):
@@ -299,6 +379,13 @@ def submit_form(request):
                 status=400,
             )
 
+        # Validate carplate exists in Cars (case-insensitive) on submit
+        if not Car.objects.filter(carplate__iexact=carplate).exists():
+            return JsonResponse(
+                {"ok": False, "error": "Car plate not found. Please check and try again."},
+                status=400,
+            )
+
         from django.utils.dateparse import parse_datetime, parse_date
         time_parked = None
         if time_parked_str:
@@ -338,6 +425,11 @@ def submit_form(request):
             msg,
         )
         _send_qr_trigger_websocket(lot_number, {"show_qr": False})
+        # Update Parking lot: set occupied=True for this lot
+        ParkingLot.objects.update_or_create(
+            lot_number=lot_number,
+            defaults={"occupied": True},
+        )
         db = _get_database_name()
         return JsonResponse({
             "ok": True,
@@ -385,6 +477,16 @@ def create_car(request):
         "type": car.type,
         "time_entered": car.time_entered.isoformat(),
     }, status=201)
+
+
+@require_GET
+def check_carplate(request):
+    """API: Check if a carplate exists in Cars (case-insensitive)."""
+    carplate = (request.GET.get("carplate") or "").strip()
+    if not carplate:
+        return JsonResponse({"ok": False, "exists": False, "error": "carplate is required."}, status=400)
+    exists = Car.objects.filter(carplate__iexact=carplate).exists()
+    return JsonResponse({"ok": True, "exists": exists})
 
 
 def _parse_request_body(request):
@@ -476,6 +578,8 @@ def update_time_car_left(request):
         time_left = timezone.now()
     ev_lot.time_left = time_left
     ev_lot.save(update_fields=["time_left"])
+    # Update Parking lot: set occupied=False when car leaves
+    ParkingLot.objects.filter(lot_number=lot_number).update(occupied=False)
     _send_qr_trigger_websocket(lot_number, {"show_qr": False})
     return JsonResponse({
         "ok": True,

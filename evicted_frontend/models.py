@@ -37,6 +37,20 @@ class Car(models.Model):
         return f"{self.carplate} ({self.type})"
 
 
+class ParkingLot(models.Model):
+    """Parking lots: lot_number and occupied status. Updated when QR form is submitted or car leaves."""
+    lot_number = models.CharField(max_length=50, unique=True)
+    occupied = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["lot_number"]
+        verbose_name = "Parking lot"
+        verbose_name_plural = "Parking lots"
+
+    def __str__(self):
+        return f"Lot {self.lot_number} ({'occupied' if self.occupied else 'free'})"
+
+
 class WorkflowTrigger(models.Model):
     """Stores the last trigger time (used to pre-fill TimeParked on the form)."""
     triggered_at = models.DateTimeField(auto_now_add=True)

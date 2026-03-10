@@ -19,5 +19,6 @@ urlpatterns = [
     path("api/submit-form/", views.submit_form, name="submit_form"),
     path("api/update-time-car-left/", views.update_time_car_left, name="update_time_car_left"),
     path("api/cars/", views.create_car, name="create_car"),
+    path("api/check-carplate/", views.check_carplate, name="check_carplate"),
     path("api/queue-sms/", views.queue_sms, name="queue_sms"),
 ]

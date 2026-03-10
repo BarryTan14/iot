@@ -39,7 +39,32 @@
     </div>
 </section>
 <section class="card">
-    <h2>3. EV Lots</h2>
+    <h2>3. Parking lots</h2>
+    {% if parking_lots %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Lot number</th>
+                    <th>Occupied</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in parking_lots %}
+                <tr>
+                    <td>{{ p.lot_number }}</td>
+                    <td>{% if p.occupied %}Yes{% else %}No{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No parking lot records yet.</p>
+    {% endif %}
+</section>
+<section class="card">
+    <h2>4. EV Lots</h2>
     {% if ev_lots %}
     <div class="table-wrap">
         <table class="data-table">
@@ -72,7 +97,7 @@
     {% endif %}
 </section>
 <section class="card">
-    <h2>4. Cars</h2>
+    <h2>5. Cars</h2>
     {% if cars %}
     <div class="table-wrap">
         <table class="data-table">
