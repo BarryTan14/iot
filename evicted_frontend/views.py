@@ -21,12 +21,14 @@ def _get_database_name():
 
 
 def index(request):
-    """Main page: trigger workflow button + QR code for form."""
+    """Main page: trigger workflow button + QR code for form + EV Lots and Cars tables."""
     form_url = request.build_absolute_uri("/form/")
-    submissions = EVLot.objects.all()[:50]
+    ev_lots = EVLot.objects.all()[:50]
+    cars = Car.objects.all()[:50]
     return render(request, "evicted_frontend/index.html", {
         "form_url": form_url,
-        "submissions": submissions,
+        "ev_lots": ev_lots,
+        "cars": cars,
     })
 
 

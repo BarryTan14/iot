@@ -3,6 +3,16 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 <h1>Parking – Staff</h1>
+<nav class="card" style="margin-bottom: 1rem;">
+    <h2 style="margin-top: 0;">Live display</h2>
+    <p class="muted" style="margin-bottom: 0.5rem;">Open the live QR page for a kiosk or screen.</p>
+    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+        <li><a href="{% url 'evicted_frontend:qr_live' %}" class="btn btn-secondary">Live – all lots</a></li>
+        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=1 %}" class="btn btn-secondary">Live – Lot 1</a></li>
+        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=2 %}" class="btn btn-secondary">Live – Lot 2</a></li>
+        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=3 %}" class="btn btn-secondary">Live – Lot 3</a></li>
+    </ul>
+</nav>
 <section class="card">
     <h2>1. Trigger workflow</h2>
     <p>Click to record current time as “Time parked” (for testing).</p>
@@ -29,8 +39,8 @@
     </div>
 </section>
 <section class="card">
-    <h2>3. Current submissions</h2>
-    {% if submissions %}
+    <h2>3. EV Lots</h2>
+    {% if ev_lots %}
     <div class="table-wrap">
         <table class="data-table">
             <thead>
@@ -44,7 +54,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for s in submissions %}
+                {% for s in ev_lots %}
                 <tr>
                     <td>{{ s.carplate }}</td>
                     <td>{{ s.name }}</td>
@@ -58,7 +68,34 @@
         </table>
     </div>
     {% else %}
-    <p class="muted">No submissions yet.</p>
+    <p class="muted">No EV lot records yet.</p>
+    {% endif %}
+</section>
+<section class="card">
+    <h2>4. Cars</h2>
+    {% if cars %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Car plate</th>
+                    <th>Type</th>
+                    <th>Time entered</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cars %}
+                <tr>
+                    <td>{{ c.carplate }}</td>
+                    <td>{{ c.type }}</td>
+                    <td>{{ c.time_entered|date:"M d, H:i" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No car records yet.</p>
     {% endif %}
 </section>
 {% endblock %}
