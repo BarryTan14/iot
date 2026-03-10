@@ -1,6 +1,8 @@
 import json
 import re
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
@@ -9,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from .models import ParkingSubmission, WorkflowTrigger
 from .mqtt_client import publish_sms_event, publish_trigger_event
+from .consumers import qr_lot_group_name
 
 
 def _get_database_name():
@@ -92,15 +95,20 @@ def qr_live(request, lot_number=None):
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
     warning_seconds = int(request.GET.get("warning_seconds", "120")) or 120
     timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
+    scheme = "wss" if request.is_secure() else "ws"
+    host = request.get_host()
+    if lot_number:
+        ws_path = f"/ws/qr-live/{lot_number}/"
+    else:
+        ws_path = "/ws/qr-live/"
+    ws_url = f"{scheme}://{host}{ws_path}"
     qr_live_config = {
-        "api_qr_status": api_base + "/qr-status/",
         "api_alert_no_submission": api_base + "/alert-no-submission/",
-        "poll_interval_ms": 3000,
-        "recent_minutes": int(request.GET.get("minutes", "10")) or 10,
         "warning_seconds": warning_seconds,
         "timer_initial": timer_initial,
         "lot_numbers": lot_numbers,
         "page_lot": lot_number,
+        "ws_url": ws_url,
     }
     return render(request, "evicted_frontend/qr_live.html", {
         "qr_live_config": qr_live_config,
@@ -121,12 +129,11 @@ def trigger_workflow(request):
         lot = request.GET.get("lot", "")
         WorkflowTrigger.objects.create(lot_number=lot)
         payload = _qr_display_payload(request)
-        return JsonResponse({
-            "ok": True,
-            "triggered_at": timezone.now().isoformat(),
-            **payload,
-        })
-    # POST
+        triggered_at = timezone.now().isoformat()
+        triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
+        ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
+        _send_qr_trigger_websocket(lot, ws_payload)
+        return JsonResponse({"ok": True, "triggered_at": triggered_at, **payload})
     return trigger_workflow_post(request)
 
 
@@ -136,11 +143,28 @@ def trigger_workflow_post(request):
     lot = request.POST.get("lot_number", "") or request.GET.get("lot", "")
     WorkflowTrigger.objects.create(lot_number=lot)
     payload = _qr_display_payload(request)
-    return JsonResponse({
-        "ok": True,
-        "triggered_at": timezone.now().isoformat(),
-        **payload,
-    })
+    triggered_at = timezone.now().isoformat()
+    triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
+    ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
+    _send_qr_trigger_websocket(lot, ws_payload)
+    return JsonResponse({"ok": True, "triggered_at": triggered_at, **payload})
+
+
+def _send_qr_trigger_websocket(lot_str, payload):
+    """Send payload to WebSocket group for this lot so the live page shows the QR."""
+    try:
+        triggered_lot = None
+        if lot_str and str(lot_str).strip().isdigit():
+            n = int(str(lot_str).strip())
+            if n in LOT_NUMBERS:
+                triggered_lot = n
+        group = qr_lot_group_name(triggered_lot)
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            message = {"type": "qr_trigger", "payload": payload}
+            async_to_sync(channel_layer.group_send)(group, message)
+    except Exception:
+        pass
 
 
 def _triggered_lot_from_trigger(trigger):
@@ -304,6 +328,7 @@ def submit_form(request):
             submission.created_at.isoformat(),
             msg,
         )
+        _send_qr_trigger_websocket(lot_number, {"show_qr": False})
         db = _get_database_name()
         return JsonResponse({
             "ok": True,
@@ -404,6 +429,7 @@ def update_time_car_left(request):
         time_car_left = timezone.now()
     submission.time_car_left = time_car_left
     submission.save(update_fields=["time_car_left"])
+    _send_qr_trigger_websocket(lot_number, {"show_qr": False})
     return JsonResponse({
         "ok": True,
         "id": submission.pk,

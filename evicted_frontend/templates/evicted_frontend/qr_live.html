@@ -31,15 +31,13 @@
 (function() {
     var raw = document.getElementById("qr-live-config");
     var CONFIG = raw ? JSON.parse(raw.textContent) : {};
-    var API_QR_STATUS = CONFIG.api_qr_status || "";
     var API_ALERT_NO_SUBMISSION = CONFIG.api_alert_no_submission || "";
-    var POLL_MS = CONFIG.poll_interval_ms || 3000;
-    var RECENT_MINUTES = CONFIG.recent_minutes || 10;
     var WARNING_MS = (CONFIG.warning_seconds || 120) * 1000;
     var LOT_NUMBERS = CONFIG.lot_numbers || [1, 2, 3];
     var PAGE_LOT = CONFIG.page_lot;
+    var WS_URL = CONFIG.ws_url || "";
 
-    console.log("[QR live] init", { PAGE_LOT: PAGE_LOT, WARNING_MS: WARNING_MS, API_ALERT_NO_SUBMISSION: API_ALERT_NO_SUBMISSION });
+    console.log("[QR live] init", { PAGE_LOT: PAGE_LOT, WARNING_MS: WARNING_MS, WS_URL: WS_URL });
 
     const statusEl = document.getElementById("qr-live-status");
     const codesEl = document.getElementById("qr-live-codes");
@@ -172,25 +170,36 @@
         return triggeredLot === PAGE_LOT;
     }
 
-    function poll() {
-        var url = API_QR_STATUS + "?minutes=" + RECENT_MINUTES;
-        fetch(url)
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                var ok = data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot);
-                if (ok) {
-                    showQrCodes(data.lot_urls, data.triggered_at);
-                } else {
+    function connectWs() {
+        if (!WS_URL) return;
+        var ws = new WebSocket(WS_URL);
+        ws.onopen = function() {
+            console.log("[QR live] WebSocket connected");
+        };
+        ws.onmessage = function(ev) {
+            try {
+                var data = JSON.parse(ev.data);
+                if (data.show_qr === false) {
                     hideQrCodes();
+                    return;
                 }
-            })
-            .catch(function(err) {
-                console.log("[QR live] poll error", err);
-            });
+                if (data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot)) {
+                    showQrCodes(data.lot_urls, data.triggered_at);
+                }
+            } catch (e) {
+                console.log("[QR live] WebSocket message parse error", e);
+            }
+        };
+        ws.onclose = function() {
+            console.log("[QR live] WebSocket closed, reconnecting in 3s");
+            setTimeout(connectWs, 3000);
+        };
+        ws.onerror = function() {
+            ws.close();
+        };
     }
 
-    setInterval(poll, POLL_MS);
-    poll();
+    connectWs();
 })();
 </script>
 {% endblock %}
