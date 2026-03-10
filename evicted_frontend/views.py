@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import ParkingSubmission, WorkflowTrigger
+from .models import EVLot, Car, WorkflowTrigger
 from .mqtt_client import publish_sms_event, publish_trigger_event
 from .consumers import qr_lot_group_name
 
@@ -23,7 +23,7 @@ def _get_database_name():
 def index(request):
     """Main page: trigger workflow button + QR code for form."""
     form_url = request.build_absolute_uri("/form/")
-    submissions = ParkingSubmission.objects.all()[:50]
+    submissions = EVLot.objects.all()[:50]
     return render(request, "evicted_frontend/index.html", {
         "form_url": form_url,
         "submissions": submissions,
@@ -51,7 +51,8 @@ def _qr_display_payload(request):
     form_url = request.build_absolute_uri("/form/")
     qr_page_url = base + "/qr/"
     qr_live_url = base + "/qr/live/"
-    lot_urls = {str(i): f"{form_url}?lot={i}" for i in LOT_NUMBERS}
+    # Use path-based URLs so form opens with lot in URL and lot number is non-editable
+    lot_urls = {str(i): f"{base}/form/{i}/" for i in LOT_NUMBERS}
     qr_live_url_by_lot = {str(i): f"{base}/qr/live/{i}/" for i in LOT_NUMBERS}
     return {
         "form_url": form_url,
@@ -189,7 +190,7 @@ def qr_status(request):
     """
     recent_minutes = int(request.GET.get("minutes", "10")) or 10
     trigger = WorkflowTrigger.objects.first()
-    submission = ParkingSubmission.objects.first()
+    submission = EVLot.objects.first()
     payload = _qr_display_payload(request)
     if not trigger:
         return JsonResponse({"show_qr": False, "triggered_at": None, "triggered_lot": None, **payload})
@@ -202,11 +203,11 @@ def qr_status(request):
     trigger_recent = triggered_at >= cutoff
     show_qr = trigger_recent and not submitted_after_trigger
     if show_qr and triggered_lot is not None:
-        lot_submission = ParkingSubmission.objects.filter(lot_number=str(triggered_lot)).first()
+        lot_submission = EVLot.objects.filter(lot_number=str(triggered_lot)).first()
         if (
             lot_submission is not None
-            and lot_submission.time_car_left is not None
-            and lot_submission.time_car_left >= triggered_at
+            and lot_submission.time_left is not None
+            and lot_submission.time_left >= triggered_at
         ):
             show_qr = False
     response = {
@@ -267,11 +268,11 @@ def alert_no_submission(request):
     ).first()
     if not trigger:
         return JsonResponse({"ok": False, "error": "Trigger not found or mismatch."}, status=400)
-    submission = ParkingSubmission.objects.filter(
+    ev_lot = EVLot.objects.filter(
         lot_number=lot_number,
         created_at__gt=triggered_at,
     ).first()
-    if submission:
+    if ev_lot:
         return JsonResponse({"ok": True, "already_submitted": True})
     msg = f"Lot {lot_number}: Form not submitted within 2 minutes."
     if publish_trigger_event("no_submission", lot_number, triggered_at.isoformat(), msg):
@@ -307,25 +308,31 @@ def submit_form(request):
             if timezone.is_naive(time_parked):
                 time_parked = timezone.make_aware(time_parked)
 
-        time_car_left = None
+        time_left = None
         if time_car_left_str:
-            time_car_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
-            if time_car_left and timezone.is_naive(time_car_left):
-                time_car_left = timezone.make_aware(time_car_left)
+            time_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
+            if time_left and timezone.is_naive(time_left):
+                time_left = timezone.make_aware(time_left)
 
-        submission = ParkingSubmission.objects.create(
+        ev_lot = EVLot.objects.create(
             carplate=carplate,
             name=name,
             time_parked=time_parked,
-            time_car_left=time_car_left,
+            time_left=time_left,
             phone=phone,
             lot_number=lot_number,
+        )
+        # Link to Cars table: EV lot form implies EV type, time_entered = time_parked
+        Car.objects.create(
+            carplate=carplate,
+            type="EV",
+            time_entered=time_parked,
         )
         msg = f"Form submitted for lot {lot_number}."
         publish_trigger_event(
             "form_submitted",
             lot_number,
-            submission.created_at.isoformat(),
+            ev_lot.created_at.isoformat(),
             msg,
         )
         _send_qr_trigger_websocket(lot_number, {"show_qr": False})
@@ -338,6 +345,44 @@ def submit_form(request):
         })
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def create_car(request):
+    """
+    API: Create a new record in the Cars table.
+    Body (JSON or form): carplate (required), type (required, "ICE" or "EV"), time_entered (ISO datetime, optional; default now).
+    """
+    data, err = _parse_request_body(request)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+    if not data:
+        data = {}
+    carplate = (data.get("carplate") or "").strip()
+    car_type = (data.get("type") or "").strip().upper()
+    if not carplate:
+        return JsonResponse({"ok": False, "error": "carplate is required."}, status=400)
+    if car_type not in ("ICE", "EV"):
+        return JsonResponse({"ok": False, "error": "type must be ICE or EV."}, status=400)
+    time_entered_str = (data.get("time_entered") or "").strip()
+    if time_entered_str:
+        from django.utils.dateparse import parse_datetime, parse_date
+        time_entered = parse_datetime(time_entered_str) or parse_date(time_entered_str)
+        if not time_entered:
+            return JsonResponse({"ok": False, "error": "Invalid time_entered."}, status=400)
+        if timezone.is_naive(time_entered):
+            time_entered = timezone.make_aware(time_entered)
+    else:
+        time_entered = timezone.now()
+    car = Car.objects.create(carplate=carplate, type=car_type, time_entered=time_entered)
+    return JsonResponse({
+        "ok": True,
+        "id": car.pk,
+        "carplate": car.carplate,
+        "type": car.type,
+        "time_entered": car.time_entered.isoformat(),
+    }, status=201)
 
 
 def _parse_request_body(request):
@@ -414,25 +459,25 @@ def update_time_car_left(request):
     lot_number = (data.get("lot_number") or "").strip()
     if not lot_number:
         return JsonResponse({"ok": False, "error": "lot_number is required."}, status=400)
-    submission = ParkingSubmission.objects.filter(lot_number=lot_number).first()
-    if not submission:
-        return JsonResponse({"ok": False, "error": "No submission found for that lot_number."}, status=404)
+    ev_lot = EVLot.objects.filter(lot_number=lot_number).first()
+    if not ev_lot:
+        return JsonResponse({"ok": False, "error": "No EV lot record found for that lot_number."}, status=404)
     time_car_left_str = (data.get("time_car_left") or "").strip()
     if time_car_left_str:
         from django.utils.dateparse import parse_datetime, parse_date
-        time_car_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
-        if not time_car_left:
+        time_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
+        if not time_left:
             return JsonResponse({"ok": False, "error": "Invalid time_car_left."}, status=400)
-        if timezone.is_naive(time_car_left):
-            time_car_left = timezone.make_aware(time_car_left)
+        if timezone.is_naive(time_left):
+            time_left = timezone.make_aware(time_left)
     else:
-        time_car_left = timezone.now()
-    submission.time_car_left = time_car_left
-    submission.save(update_fields=["time_car_left"])
+        time_left = timezone.now()
+    ev_lot.time_left = time_left
+    ev_lot.save(update_fields=["time_left"])
     _send_qr_trigger_websocket(lot_number, {"show_qr": False})
     return JsonResponse({
         "ok": True,
-        "id": submission.pk,
-        "lot_number": submission.lot_number,
-        "time_car_left": submission.time_car_left.isoformat(),
+        "id": ev_lot.pk,
+        "lot_number": ev_lot.lot_number,
+        "time_car_left": ev_lot.time_left.isoformat(),
     })

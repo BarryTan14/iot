@@ -50,7 +50,7 @@
                     <td>{{ s.name }}</td>
                     <td>{{ s.lot_number }}</td>
                     <td>{{ s.time_parked|date:"M d, H:i" }}</td>
-                    <td>{% if s.time_car_left %}{{ s.time_car_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
+                    <td>{% if s.time_left %}{{ s.time_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
                     <td>{{ s.phone }}</td>
                 </tr>
                 {% endfor %}

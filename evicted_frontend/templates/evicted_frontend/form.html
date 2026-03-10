@@ -15,7 +15,11 @@
     <label for="phone">Phone number *</label>
     <input type="tel" id="phone" name="phone" required placeholder="e.g. +65 9123 4567">
     <label for="lot_display">Lot number</label>
-    <input type="text" id="lot_display" value="{{ lot_number|default:'' }}" placeholder="From QR or enter manually" data-sync-to="lot_number">
+    {% if lot_number %}
+    <input type="text" id="lot_display" value="{{ lot_number }}" readonly class="readonly-lot" aria-readonly="true">
+    {% else %}
+    <input type="text" id="lot_display" value="{{ lot_number|default:'' }}" placeholder="Enter lot manually" data-sync-to="lot_number">
+    {% endif %}
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">Submit</button>
     </div>
@@ -31,8 +35,11 @@
     const lotHidden = document.getElementById("lot_number");
     const formStatus = document.getElementById("form-status");
 
-    if (lotDisplay && lotHidden) {
+    if (lotDisplay && lotHidden && !lotDisplay.readOnly) {
         lotDisplay.addEventListener("input", function() { lotHidden.value = lotDisplay.value; });
+    }
+    if (lotDisplay && lotHidden && lotDisplay.readOnly) {
+        lotHidden.value = lotDisplay.value;
     }
 
     function setTimeParked(iso) {

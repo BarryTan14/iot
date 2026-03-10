@@ -1,13 +1,13 @@
-"""Generate random VehicleEntry records for testing."""
+"""Generate random Car records for testing."""
 import random
 from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from evicted_frontend.models import VehicleEntry
+from evicted_frontend.models import Car
 
 
 class Command(BaseCommand):
-    help = "Generate random VehicleEntry records (Carplate, Type, Time entered)"
+    help = "Generate random Car records (Carplate, Type, Time entered)"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -39,11 +39,11 @@ class Command(BaseCommand):
             vehicle_type = random.choice(types)
             hours_ago = random.randint(0, 72)
             time_entered = base_time - timedelta(hours=hours_ago, minutes=random.randint(0, 59))
-            VehicleEntry.objects.create(
+            Car.objects.create(
                 carplate=plate,
                 type=vehicle_type,
                 time_entered=time_entered,
             )
             created += 1
 
-        self.stdout.write(self.style.SUCCESS(f"Created {created} VehicleEntry records."))
+        self.stdout.write(self.style.SUCCESS(f"Created {created} Car records."))
