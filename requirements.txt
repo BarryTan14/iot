@@ -7,3 +7,4 @@ whitenoise>=6.0
 paho-mqtt>=2.0
 channels>=4.0
 daphne>=4.0
+twilio>=9.0

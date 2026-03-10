@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from asgiref.sync import async_to_sync
@@ -11,7 +12,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from .models import EVLot, Car, ParkingLot, WorkflowTrigger
 from .mqtt_client import publish_sms_event, publish_trigger_event
+from .sms_client import send_sms
 from .consumers import qr_lot_group_name
+
+logger = logging.getLogger(__name__)
 
 
 def _get_database_name():
@@ -187,9 +191,15 @@ def _check_on_trigger_lot(lot_number):
 
 def _send_sms_to_phone(phone_number: str, message: str) -> bool:
     """
-    Send an SMS to the given phone number by publishing an event to the MQTT broker.
-    A subscriber consumes the message and performs the actual SMS delivery.
+    Send an SMS to the given phone number.
+    First try direct send via Twilio (sms_client). If that is not configured,
+    fall back to publishing an event to the MQTT broker.
     """
+    # Try direct SMS (Twilio)
+    ok = send_sms(phone_number, message)
+    if ok:
+        return True
+    # Fallback: publish to MQTT so an external subscriber can send the SMS
     return publish_sms_event(phone_number, message)
 
 
@@ -231,6 +241,39 @@ def _check_full_lots_and_notify_longest_ice():
         "Please move your car to allow EV charging. Thank you."
     )
     _send_sms_to_phone(phone, message)
+
+
+def _notify_longest_parked_ice_to_move_for_ev():
+    """
+    Find ICE cars currently parked in the lots (EVLot with time_left null).
+    If any exist, get the one parked the longest, retrieve their phone from EV Lots, and send an SMS
+    asking them to move for the incoming EV.
+    Returns True if an SMS was sent, False otherwise.
+    """
+    current_occupants = []
+    for n in LOT_NUMBERS:
+        ev_lot = (
+            EVLot.objects.filter(lot_number=str(n), time_left__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        if ev_lot:
+            current_occupants.append(ev_lot)
+    ice_occupants = [
+        ev_lot for ev_lot in current_occupants
+        if Car.objects.filter(carplate__iexact=ev_lot.carplate, type="ICE").exists()
+    ]
+    if not ice_occupants:
+        return False
+    longest_parked = min(ice_occupants, key=lambda o: o.time_parked)
+    phone = (longest_parked.phone or "").strip()
+    if not phone:
+        return False
+    message = (
+        "An EV car has arrived and needs to park. Please move your vehicle so the EV can use the charging lot. Thank you."
+    )
+    _send_sms_to_phone(phone, message)
+    return True
 
 
 def _send_qr_trigger_websocket(lot_str, payload):
@@ -470,12 +513,27 @@ def create_car(request):
     else:
         time_entered = timezone.now()
     car = Car.objects.create(carplate=carplate, type=car_type, time_entered=time_entered)
+
+    # When an EV car enters the gantry: if any ICE cars are currently parked in the lots,
+    # find the one parked longest and send them an SMS to move for the EV.
+    sms_queued = False
+    if car_type == "EV":
+        try:
+            sms_queued = _notify_longest_parked_ice_to_move_for_ev()
+            if sms_queued:
+                logger.info("EV entered gantry: queued SMS to longest-parked ICE driver (carplate %s)", car.carplate)
+            else:
+                logger.info("EV entered gantry: no ICE cars currently parked, no SMS sent")
+        except Exception as e:
+            logger.exception("EV entered gantry: failed to notify ICE driver: %s", e)
+
     return JsonResponse({
         "ok": True,
         "id": car.pk,
         "carplate": car.carplate,
         "type": car.type,
         "time_entered": car.time_entered.isoformat(),
+        "sms_queued": sms_queued,
     }, status=201)
 
 
