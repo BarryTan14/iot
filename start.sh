@@ -11,5 +11,5 @@ python manage.py migrate --noinput
 echo "=== Collecting static files ==="
 python manage.py collectstatic --noinput || true
 
-echo "=== Starting Gunicorn ==="
-exec gunicorn evicted.wsgi --bind "0.0.0.0:$PORT" --workers 1 --timeout 120 --access-logfile - --error-logfile -
+echo "=== Starting Daphne (ASGI for WebSockets) ==="
+exec daphne -b 0.0.0.0 -p "$PORT" evicted.asgi:application
