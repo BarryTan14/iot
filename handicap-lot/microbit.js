@@ -14,16 +14,17 @@ function handleMessage(msg: string) {
     serial.writeLine("MSG: " + msg)
     if (msg == "ALARM") {
         alarming = true
+        music.ringTone(880)
         basic.showIcon(IconNames.Sad)
 
     } else if (msg == "VALID") {
         alarming = false
-        music.stopAllSounds()
+        music.ringTone(0)
         basic.showIcon(IconNames.Happy)
 
     } else if (msg == "STOP") {
         alarming = false
-        music.stopAllSounds()
+        music.ringTone(0)
         basic.showIcon(IconNames.Happy)
     }
 }
@@ -34,9 +35,9 @@ if (!TEST_MODE) {
     if (USE_BLE_COMMS) {
         bluetooth.startUartService()
         bluetooth.setTransmitPower(7)  // max power
-    } else {
-        serial.redirect(SerialPin.P0, SerialPin.P1, BaudRate.BaudRate9600)
     }
+    // When USE_BLE_COMMS is false, use default USB serial (no redirect needed)
+    // The bridge script on the Mac forwards commands from Arduino to micro:bit
 }
 
 basic.showIcon(IconNames.Happy)
@@ -80,7 +81,7 @@ input.onButtonPressed(Button.A, function () {
         }
     } else if (alarming) {
         alarming = false
-        music.stopAllSounds()
+        music.ringTone(0)
         basic.showIcon(IconNames.Happy)
     }
 })
@@ -95,11 +96,11 @@ input.onButtonPressed(Button.B, function () {
 
 basic.forever(function () {
     if (alarming) {
-        music.playTone(880, 500)
-        music.playTone(440, 500)
+        music.ringTone(880)
         basic.showIcon(IconNames.No)
-        basic.pause(300)
+        basic.pause(500)
+        music.ringTone(440)
         basic.clearScreen()
-        basic.pause(300)
+        basic.pause(500)
     }
 })
