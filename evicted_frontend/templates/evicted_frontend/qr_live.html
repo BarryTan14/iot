@@ -32,7 +32,7 @@
     var raw = document.getElementById("qr-live-config");
     var CONFIG = raw ? JSON.parse(raw.textContent) : {};
     var API_ALERT_NO_SUBMISSION = CONFIG.api_alert_no_submission || "";
-    var WARNING_MS = (CONFIG.warning_seconds || 10) * 1000;
+    var WARNING_MS = (CONFIG.warning_seconds != null ? CONFIG.warning_seconds : 10) * 1000;
     var LOT_NUMBERS = CONFIG.lot_numbers || [1, 2, 3];
     var PAGE_LOT = CONFIG.page_lot;
     var WS_URL = CONFIG.ws_url || "";
@@ -66,36 +66,20 @@
         return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
-    function showNoSubmitAlert() {
-        console.log("[QR live] showNoSubmitAlert called", { PAGE_LOT: PAGE_LOT, currentTriggeredAt: currentTriggeredAt });
+    function onTimerExpired() {
         if (PAGE_LOT !== null && currentTriggeredAt) {
             var csrf = document.querySelector('meta[name="csrf-token"]');
             var token = csrf ? csrf.getAttribute('content') : '';
             var body = JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT });
-            console.log("[QR live] calling alert API", API_ALERT_NO_SUBMISSION, body);
             fetch(API_ALERT_NO_SUBMISSION, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": token || "" },
                 body: body,
             })
-                .then(function(r) {
-                    console.log("[QR live] alert API response", r.status, r.statusText);
-                    return r.json();
-                })
-                .then(function(data) {
-                    console.log("[QR live] alert API data", data);
-                })
-                .catch(function(err) {
-                    console.log("[QR live] alert API error", err);
-                });
-        } else {
-            console.log("[QR live] skipping alert API (PAGE_LOT or currentTriggeredAt missing)");
+                .then(function(r) { return r.json(); })
+                .then(function(data) { console.log("[QR live] no-submission API response", data); })
+                .catch(function(err) { console.log("[QR live] no-submission API error", err); });
         }
-        var msg = "Form not submitted within the time limit. Please check if the user scanned and completed the form.";
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            new Notification("Parking QR – No submission", { body: msg });
-        }
-        alert(msg);
     }
 
     function startCountdown(endAt) {
@@ -143,7 +127,7 @@
                 console.log("[QR live] timer fired");
                 noSubmitWarningTimer = null;
                 stopCountdown();
-                if (codesEl.style.display !== "none") showNoSubmitAlert();
+                if (codesEl.style.display !== "none") onTimerExpired();
             }, WARNING_MS);
         }
     }

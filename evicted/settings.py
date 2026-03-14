@@ -180,3 +180,6 @@ MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
 # Optional: included in trigger event payloads (e.g. for subscriber to send alerts)
 MQTT_ALERT_PHONE = os.environ.get("MQTT_ALERT_PHONE", "")
+
+# QR live page: countdown duration in seconds before "no submission" is reported (single source of truth)
+QR_LIVE_WARNING_SECONDS = int(os.environ.get("QR_LIVE_WARNING_SECONDS", "10"))

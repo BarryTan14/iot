@@ -110,7 +110,7 @@ def qr_live(request, lot_number=None):
     - /qr/live/ : show all lots (1, 2, 3).
     - /qr/live/<lot_number>/ : show only that lot (e.g. for a kiosk dedicated to lot 2).
     Resets to "Waiting for trigger…" when a form is submitted (after someone scans and submits).
-    Optional query: ?minutes=10 (how long to show QR after trigger before considering expired).
+    Timer duration comes from settings.QR_LIVE_WARNING_SECONDS (env QR_LIVE_WARNING_SECONDS). Optional override: ?warning_seconds=N.
     """
     base = request.build_absolute_uri("/").rstrip("/")
     api_base = base + "/api"
@@ -118,7 +118,9 @@ def qr_live(request, lot_number=None):
     if lot_number is not None and lot_number not in LOT_NUMBERS:
         lot_number = None
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
-    warning_seconds = int(request.GET.get("warning_seconds", "10")) or 10
+    warning_seconds = int(
+        request.GET.get("warning_seconds") or settings.QR_LIVE_WARNING_SECONDS
+    ) or settings.QR_LIVE_WARNING_SECONDS
     timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
     scheme = "wss" if request.is_secure() else "ws"
     host = request.get_host()
