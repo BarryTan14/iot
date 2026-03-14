@@ -214,7 +214,7 @@ def trigger_workflow(request):
     if err:
         return JsonResponse({"ok": False, "error": err}, status=400)
     lot = (params.get("parking_lot") or params.get("lot_number") or params.get("lot"))
-    if lot is not None:
+    if lot is not None: 
         lot = str(lot).strip()
     else:
         lot = ""
