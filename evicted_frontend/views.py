@@ -41,6 +41,19 @@ def index(request):
     })
 
 
+def dashboard(request):
+    """Dashboard: cars currently parked (EV lots) and cars that entered the gantry."""
+    parked = (
+        EVLot.objects.filter(time_left__isnull=True)
+        .order_by("-time_parked")
+    )
+    gantry_entries = Car.objects.all().order_by("-time_entered")[:100]
+    return render(request, "evicted_frontend/dashboard.html", {
+        "parked": parked,
+        "gantry_entries": gantry_entries,
+    })
+
+
 def form_page(request, lot_number=""):
     """Form page. Lot number can come from URL path or query ?lot=."""
     lot = request.GET.get("lot", lot_number) or ""
@@ -130,43 +143,95 @@ def qr_live(request, lot_number=None):
     })
 
 
+def _parse_trigger_body(request):
+    """Parse trigger-workflow body. Returns (data dict, error str or None)."""
+    data, err = _parse_request_body(request)
+    if err:
+        return None, err
+    if not data:
+        data = {}
+    params = {**request.GET.dict(), **data}
+    if request.POST:
+        params.update(request.POST.dict())
+    return params, None
+
+
 @require_http_methods(["GET", "POST"])
+@csrf_exempt
 def trigger_workflow(request):
     """
-    API: Trigger workflow (GET or POST) and return data to display the QR code.
-    GET: Callable by anyone (e.g. links, other apps); no CSRF. Returns triggered_at + form_url, qr_page_url, lot_urls.
-    POST: Same, for form submissions from the staff page.
+    API: Single endpoint for car entered/left. Use POST with body for external callers.
+
+    POST body (JSON or form):
+      - parking_lot (required): lot number, e.g. 1, 2, 3 (or use lot_number / lot)
+      - action (required): "entered" | "left" — show or hide QR
+      - timestamp (optional): ISO datetime; default now
+
+    Response: ok, and for "entered": triggered_at, form_url, lot_urls; for "left": time_car_left, etc.
+    WebSocket: show_qr true on entered, show_qr false on left (and hide on all lots live page too).
     """
     if request.method == "GET":
-        lot = request.GET.get("lot", "")
+        # Backward compat: ?lot=1 = entered, ?lot=1&car_left=true = left
+        lot = request.GET.get("lot") or request.GET.get("lot_number") or ""
+        show_qr = (request.GET.get("show_qr") or "").strip().lower()
+        car_left = (request.GET.get("car_left") or "").strip().lower()
+        is_left = show_qr == "false" or car_left in ("1", "true")
+        if is_left:
+            ok, data, status = _handle_car_left(lot, request.GET.get("time_car_left"))
+            if not ok:
+                return JsonResponse({**data, "ok": False}, status=status)
+            return JsonResponse(data)
         WorkflowTrigger.objects.create(lot_number=lot)
         _check_on_trigger_lot(lot)
         try:
             _check_full_lots_and_notify_longest_ice()
         except Exception:
-            pass  # Don't fail trigger if SMS/lot check fails
+            pass
         payload = _qr_display_payload(request)
         triggered_at = timezone.now().isoformat()
         triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
         ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
         _send_qr_trigger_websocket(lot, ws_payload)
         return JsonResponse({"ok": True, "triggered_at": triggered_at, **payload})
-    return trigger_workflow_post(request)
 
+    # POST: body with parking_lot + action (action optional for backward compat: default "entered")
+    params, err = _parse_trigger_body(request)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+    lot = (params.get("parking_lot") or params.get("lot_number") or params.get("lot"))
+    if lot is not None:
+        lot = str(lot).strip()
+    else:
+        lot = ""
+    action = (params.get("action") or "").strip().lower() or "entered"
+    timestamp_raw = (params.get("timestamp") or "").strip() or None
 
-@require_POST
-def trigger_workflow_post(request):
-    """API (POST): Record current time as TimeParked and return QR display data."""
-    lot = request.POST.get("lot_number", "") or request.GET.get("lot", "")
+    if action not in ("entered", "left"):
+        return JsonResponse({"ok": False, "error": "action must be 'entered' or 'left'."}, status=400)
+    if not lot and action == "left":
+        return JsonResponse({"ok": False, "error": "parking_lot (or lot_number / lot) is required when action is 'left'."}, status=400)
+
+    if action == "left":
+        ok, data, status = _handle_car_left(lot, timestamp_raw)
+        if not ok:
+            return JsonResponse({**data, "ok": False}, status=status)
+        return JsonResponse(data)
+
+    # action == "entered"
     WorkflowTrigger.objects.create(lot_number=lot)
     _check_on_trigger_lot(lot)
     try:
         _check_full_lots_and_notify_longest_ice()
     except Exception:
-        pass  # Don't fail trigger if SMS/lot check fails
+        pass
     payload = _qr_display_payload(request)
-    triggered_at = timezone.now().isoformat()
-    triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
+    if timestamp_raw:
+        from django.utils.dateparse import parse_datetime
+        triggered_dt = parse_datetime(timestamp_raw)
+        triggered_at = triggered_dt.isoformat() if triggered_dt else timezone.now().isoformat()
+    else:
+        triggered_at = timezone.now().isoformat()
+    triggered_lot = int(lot) if lot.strip().isdigit() and int(lot) in LOT_NUMBERS else None
     ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
     _send_qr_trigger_websocket(lot, ws_payload)
     return JsonResponse({"ok": True, "triggered_at": triggered_at, **payload})
@@ -277,20 +342,63 @@ def _notify_longest_parked_ice_to_move_for_ev():
 
 
 def _send_qr_trigger_websocket(lot_str, payload):
-    """Send payload to WebSocket group for this lot so the live page shows the QR."""
+    """Send payload to WebSocket group for this lot so the live page shows/hides the QR.
+    When payload has show_qr=False, also sends to the 'all' group so /qr/live/ (all lots) hides the QR."""
     try:
         triggered_lot = None
         if lot_str and str(lot_str).strip().isdigit():
             n = int(str(lot_str).strip())
             if n in LOT_NUMBERS:
                 triggered_lot = n
-        group = qr_lot_group_name(triggered_lot)
         channel_layer = get_channel_layer()
-        if channel_layer:
-            message = {"type": "qr_trigger", "payload": payload}
-            async_to_sync(channel_layer.group_send)(group, message)
+        if not channel_layer:
+            return
+        message = {"type": "qr_trigger", "payload": payload}
+        # Always send to the lot-specific group
+        group = qr_lot_group_name(triggered_lot)
+        async_to_sync(channel_layer.group_send)(group, message)
+        # When hiding QR, also notify the "all lots" live page so it hides too
+        if payload.get("show_qr") is False:
+            all_group = qr_lot_group_name(None)
+            if all_group != group:
+                async_to_sync(channel_layer.group_send)(all_group, message)
     except Exception:
         pass
+
+
+def _handle_car_left(lot_number, time_car_left_str=None):
+    """
+    Record that the car left the lot: set EVLot.time_left, set ParkingLot.occupied=False,
+    and send WebSocket show_qr=False so the live QR display hides.
+    Returns (ok: bool, data: dict, status: int). On failure data has "error" key.
+    """
+    lot_number = (lot_number or "").strip()
+    if not lot_number:
+        return False, {"error": "lot_number is required."}, 400
+    if lot_number not in (str(n) for n in LOT_NUMBERS):
+        return False, {"error": "Invalid lot_number."}, 400
+    ev_lot = EVLot.objects.filter(lot_number=lot_number).order_by("-created_at").first()
+    if not ev_lot:
+        return False, {"error": "No EV lot record found for that lot_number."}, 404
+    if time_car_left_str:
+        from django.utils.dateparse import parse_datetime, parse_date
+        time_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
+        if not time_left:
+            return False, {"error": "Invalid time_car_left."}, 400
+        if timezone.is_naive(time_left):
+            time_left = timezone.make_aware(time_left)
+    else:
+        time_left = timezone.now()
+    ev_lot.time_left = time_left
+    ev_lot.save(update_fields=["time_left"])
+    ParkingLot.objects.filter(lot_number=lot_number).update(occupied=False)
+    _send_qr_trigger_websocket(lot_number, {"show_qr": False})
+    return True, {
+        "ok": True,
+        "id": ev_lot.pk,
+        "lot_number": ev_lot.lot_number,
+        "time_car_left": ev_lot.time_left.isoformat(),
+    }, 200
 
 
 def _triggered_lot_from_trigger(trigger):
@@ -611,37 +719,16 @@ def update_time_car_left(request):
     """
     API: Update time_car_left for a parking submission by lot number.
     Body (JSON or form): lot_number (required), time_car_left (ISO datetime, optional; default now).
-    Updates the most recent submission for that lot.
+    Updates the most recent submission for that lot and sends WebSocket to hide the QR (same as trigger_workflow with car_left=true).
     """
     data, err = _parse_request_body(request)
     if err:
         return JsonResponse({"ok": False, "error": err}, status=400)
     if not data:
         data = {}
-    lot_number = (data.get("lot_number") or "").strip()
-    if not lot_number:
-        return JsonResponse({"ok": False, "error": "lot_number is required."}, status=400)
-    ev_lot = EVLot.objects.filter(lot_number=lot_number).first()
-    if not ev_lot:
-        return JsonResponse({"ok": False, "error": "No EV lot record found for that lot_number."}, status=404)
-    time_car_left_str = (data.get("time_car_left") or "").strip()
-    if time_car_left_str:
-        from django.utils.dateparse import parse_datetime, parse_date
-        time_left = parse_datetime(time_car_left_str) or parse_date(time_car_left_str)
-        if not time_left:
-            return JsonResponse({"ok": False, "error": "Invalid time_car_left."}, status=400)
-        if timezone.is_naive(time_left):
-            time_left = timezone.make_aware(time_left)
-    else:
-        time_left = timezone.now()
-    ev_lot.time_left = time_left
-    ev_lot.save(update_fields=["time_left"])
-    # Update Parking lot: set occupied=False when car leaves
-    ParkingLot.objects.filter(lot_number=lot_number).update(occupied=False)
-    _send_qr_trigger_websocket(lot_number, {"show_qr": False})
-    return JsonResponse({
-        "ok": True,
-        "id": ev_lot.pk,
-        "lot_number": ev_lot.lot_number,
-        "time_car_left": ev_lot.time_left.isoformat(),
-    })
+    lot_number = data.get("lot_number") or data.get("lot") or ""
+    time_car_left_str = (data.get("time_car_left") or "").strip() or None
+    ok, result, status = _handle_car_left(lot_number, time_car_left_str)
+    if not ok:
+        return JsonResponse({**result, "ok": False}, status=status)
+    return JsonResponse(result)

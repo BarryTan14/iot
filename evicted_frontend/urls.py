@@ -5,6 +5,7 @@ app_name = 'evicted_frontend'
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("dashboard/", views.dashboard, name="dashboard"),
     path("form/", views.form_page, name="form"),
     path("form/<str:lot_number>/", views.form_page, name="form_with_lot"),
     path("success/", views.success, name="success"),
