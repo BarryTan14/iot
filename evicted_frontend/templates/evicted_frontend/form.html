@@ -42,6 +42,25 @@
         lotHidden.value = lotDisplay.value;
     }
 
+    function setLotFromUrl() {
+        var lot = "";
+        var pathMatch = window.location.pathname.match(/\/form\/(\d+)\/?/);
+        if (pathMatch) lot = pathMatch[1];
+        if (!lot) lot = urlParams.get("lot") || urlParams.get("lot_number") || "";
+        if (lot && lotHidden && lotDisplay) {
+            lotHidden.value = lot;
+            lotDisplay.value = lot;
+            lotDisplay.readOnly = true;
+            lotDisplay.setAttribute("aria-readonly", "true");
+            if (lotDisplay.classList && !lotDisplay.classList.contains("readonly-lot")) {
+                lotDisplay.classList.add("readonly-lot");
+            }
+        }
+    }
+
+    var urlParams = new URLSearchParams(window.location.search);
+    setLotFromUrl();
+
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
         const d = new Date(iso);
@@ -49,12 +68,17 @@
         timeParkedInput.value = local.toISOString().slice(0, 16);
     }
 
-    fetch("{% url 'evicted_frontend:last_trigger' %}")
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.triggered_at) setTimeParked(data.triggered_at);
-        })
-        .catch(function() {});
+    var triggeredAtFromUrl = urlParams.get("triggered_at");
+    if (triggeredAtFromUrl) {
+        setTimeParked(triggeredAtFromUrl);
+    } else {
+        fetch("{% url 'evicted_frontend:last_trigger' %}")
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.triggered_at) setTimeParked(data.triggered_at);
+            })
+            .catch(function() {});
+    }
 
     if (form) {
         form.addEventListener("submit", function(e) {

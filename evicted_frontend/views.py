@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from urllib.parse import quote
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -84,6 +85,17 @@ def _qr_display_payload(request):
         "qr_live_url": qr_live_url,
         "lot_urls": lot_urls,
         "qr_live_url_by_lot": qr_live_url_by_lot,
+    }
+
+
+def _lot_urls_with_triggered_at(lot_urls, triggered_at_iso):
+    """Return a copy of lot_urls with triggered_at query param appended to each URL (for QR code when car entered)."""
+    if not triggered_at_iso:
+        return lot_urls
+    encoded = quote(triggered_at_iso, safe="")
+    return {
+        k: v + ("&" if "?" in v else "?") + f"triggered_at={encoded}"
+        for k, v in lot_urls.items()
     }
 
 
@@ -179,12 +191,19 @@ def trigger_workflow(request):
         car_left = (request.GET.get("car_left") or "").strip().lower()
         is_left = show_qr == "false" or car_left in ("1", "true")
         if is_left:
-            ok, data, status = _handle_car_left(lot, request.GET.get("time_car_left"))
-            if not ok:
-                return JsonResponse({**data, "ok": False}, status=status)
-            return JsonResponse(data)
+            lot = (lot or "").strip()
+            if not lot or lot not in (str(n) for n in LOT_NUMBERS):
+                return JsonResponse({"ok": False, "error": "Valid lot number is required for action 'left'."}, status=400)
+            if _is_lot_occupied(lot):
+                ok, data, status = _handle_car_left(lot, request.GET.get("time_car_left"))
+                if not ok:
+                    return JsonResponse({**data, "ok": False}, status=status)
+                return JsonResponse(data)
+            _send_qr_trigger_websocket(lot, {"show_qr": False})
+            return JsonResponse({"ok": True, "message": "QR hidden.", "lot_number": lot})
         payload = _qr_display_payload(request)
         triggered_at = timezone.now().isoformat()
+        payload["lot_urls"] = _lot_urls_with_triggered_at(payload["lot_urls"], triggered_at)
         triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
         ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
         _send_qr_trigger_websocket(lot, ws_payload)
@@ -208,10 +227,15 @@ def trigger_workflow(request):
         return JsonResponse({"ok": False, "error": "parking_lot (or lot_number / lot) is required when action is 'left'."}, status=400)
 
     if action == "left":
-        ok, data, status = _handle_car_left(lot, timestamp_raw)
-        if not ok:
-            return JsonResponse({**data, "ok": False}, status=status)
-        return JsonResponse(data)
+        if not lot or lot not in (str(n) for n in LOT_NUMBERS):
+            return JsonResponse({"ok": False, "error": "Valid parking_lot (1, 2, or 3) is required for action 'left'."}, status=400)
+        if _is_lot_occupied(lot):
+            ok, data, status = _handle_car_left(lot, timestamp_raw)
+            if not ok:
+                return JsonResponse({**data, "ok": False}, status=status)
+            return JsonResponse(data)
+        _send_qr_trigger_websocket(lot, {"show_qr": False})
+        return JsonResponse({"ok": True, "message": "QR hidden.", "lot_number": lot})
 
     # action == "entered" — only send WebSocket to frontend; no WorkflowTrigger DB write
     payload = _qr_display_payload(request)
@@ -221,6 +245,7 @@ def trigger_workflow(request):
         triggered_at = triggered_dt.isoformat() if triggered_dt else timezone.now().isoformat()
     else:
         triggered_at = timezone.now().isoformat()
+    payload["lot_urls"] = _lot_urls_with_triggered_at(payload["lot_urls"], triggered_at)
     triggered_lot = int(lot) if lot.strip().isdigit() and int(lot) in LOT_NUMBERS else None
     ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
     _send_qr_trigger_websocket(lot, ws_payload)
@@ -356,11 +381,19 @@ def _send_qr_trigger_websocket(lot_str, payload):
         pass
 
 
+def _is_lot_occupied(lot_number):
+    """True if the lot has a current occupant (EVLot with time_left null)."""
+    if not lot_number or str(lot_number).strip() not in (str(n) for n in LOT_NUMBERS):
+        return False
+    return EVLot.objects.filter(lot_number=str(lot_number).strip(), time_left__isnull=True).exists()
+
+
 def _handle_car_left(lot_number, time_car_left_str=None):
     """
     Record that the car left the lot: set EVLot.time_left, set ParkingLot.occupied=False,
     and send WebSocket show_qr=False so the live QR display hides.
     Returns (ok: bool, data: dict, status: int). On failure data has "error" key.
+    Call only when the lot is occupied; otherwise use _send_qr_trigger_websocket alone.
     """
     lot_number = (lot_number or "").strip()
     if not lot_number:
