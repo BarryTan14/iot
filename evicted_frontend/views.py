@@ -118,7 +118,7 @@ def qr_live(request, lot_number=None):
     if lot_number is not None and lot_number not in LOT_NUMBERS:
         lot_number = None
     lot_numbers = [lot_number] if lot_number else LOT_NUMBERS
-    warning_seconds = int(request.GET.get("warning_seconds", "120")) or 120
+    warning_seconds = int(request.GET.get("warning_seconds", "10")) or 10
     timer_initial = f"{warning_seconds // 60}:{warning_seconds % 60:02d}"
     scheme = "wss" if request.is_secure() else "ws"
     host = request.get_host()
@@ -457,7 +457,7 @@ def last_trigger(request):
 @require_POST
 def alert_no_submission(request):
     """
-    API: Called by the live page when the 2-minute timer expires without a form submission.
+    API: Called by the live page when the timer expires without a form submission (default 10 seconds).
     Publishes a no_submission event to the MQTT queue (e.g. to send staff an SMS).
     Body (JSON): triggered_at (ISO string), lot_number (int or string).
     """
@@ -480,22 +480,14 @@ def alert_no_submission(request):
         return JsonResponse({"ok": False, "error": "Invalid triggered_at."}, status=400)
     if timezone.is_naive(triggered_at):
         triggered_at = timezone.make_aware(triggered_at)
-    from datetime import timedelta
-    window = timedelta(seconds=30)
-    trigger = WorkflowTrigger.objects.filter(
-        lot_number=lot_number,
-        triggered_at__gte=triggered_at - window,
-        triggered_at__lte=triggered_at + window,
-    ).first()
-    if not trigger:
-        return JsonResponse({"ok": False, "error": "Trigger not found or mismatch."}, status=400)
+    # If a form was submitted for this lot after triggered_at, don't send alert
     ev_lot = EVLot.objects.filter(
         lot_number=lot_number,
         created_at__gt=triggered_at,
     ).first()
     if ev_lot:
         return JsonResponse({"ok": True, "already_submitted": True})
-    msg = f"Lot {lot_number}: Form not submitted within 2 minutes."
+    msg = f"Lot {lot_number}: Form not submitted within the time limit."
     if publish_trigger_event("no_submission", lot_number, triggered_at.isoformat(), msg):
         return JsonResponse({"ok": True, "published": True})
     return JsonResponse({"ok": False, "error": "Failed to publish to MQTT."}, status=503)

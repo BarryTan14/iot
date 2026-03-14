@@ -32,7 +32,7 @@
     var raw = document.getElementById("qr-live-config");
     var CONFIG = raw ? JSON.parse(raw.textContent) : {};
     var API_ALERT_NO_SUBMISSION = CONFIG.api_alert_no_submission || "";
-    var WARNING_MS = (CONFIG.warning_seconds || 120) * 1000;
+    var WARNING_MS = (CONFIG.warning_seconds || 10) * 1000;
     var LOT_NUMBERS = CONFIG.lot_numbers || [1, 2, 3];
     var PAGE_LOT = CONFIG.page_lot;
     var WS_URL = CONFIG.ws_url || "";
@@ -91,7 +91,7 @@
         } else {
             console.log("[QR live] skipping alert API (PAGE_LOT or currentTriggeredAt missing)");
         }
-        var msg = "Form not submitted within 2 minutes. Please check if the user scanned and completed the form.";
+        var msg = "Form not submitted within the time limit. Please check if the user scanned and completed the form.";
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             new Notification("Parking QR – No submission", { body: msg });
         }
@@ -122,7 +122,7 @@
             countdownInterval = null;
         }
         if (timerEl) timerEl.style.display = "none";
-        if (timerValueEl) timerValueEl.textContent = CONFIG.timer_initial || "2:00";
+        if (timerValueEl) timerValueEl.textContent = CONFIG.timer_initial || "0:10";
     }
 
     function showQrCodes(lotUrls, triggeredAt) {
