@@ -181,12 +181,6 @@ def trigger_workflow(request):
             if not ok:
                 return JsonResponse({**data, "ok": False}, status=status)
             return JsonResponse(data)
-        WorkflowTrigger.objects.create(lot_number=lot)
-        _check_on_trigger_lot(lot)
-        try:
-            _check_full_lots_and_notify_longest_ice()
-        except Exception:
-            pass
         payload = _qr_display_payload(request)
         triggered_at = timezone.now().isoformat()
         triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
@@ -217,13 +211,7 @@ def trigger_workflow(request):
             return JsonResponse({**data, "ok": False}, status=status)
         return JsonResponse(data)
 
-    # action == "entered"
-    WorkflowTrigger.objects.create(lot_number=lot)
-    _check_on_trigger_lot(lot)
-    try:
-        _check_full_lots_and_notify_longest_ice()
-    except Exception:
-        pass
+    # action == "entered" — only send WebSocket to frontend; no WorkflowTrigger DB write
     payload = _qr_display_payload(request)
     if timestamp_raw:
         from django.utils.dateparse import parse_datetime
