@@ -1,6 +1,5 @@
 from pathlib import Path
 from datetime import datetime, timezone
-import serial
 import time
 import requests
 import csv
@@ -8,8 +7,16 @@ import re
 
 from ocr_engine import OcrEngine
 
-PORT = "COM12"
-BAUDRATE = 115200
+
+# =========================================================
+# CHANGED FOR WIFI: removed serial PORT / BAUDRATE
+# Added Nicla HTTP server config instead
+# =========================================================
+NICLA_IP = ""   # <-- CHANGE THIS if you use another Nicla IP: 10.176.72.250
+NICLA_PORT = 80
+# NICLA_CAPTURE_URL = f"http://{NICLA_IP}:{NICLA_PORT}/capture"
+
+NICLA_CAPTURE_URL = f"http://{NICLA_IP}:{NICLA_PORT}/capture"
 
 ROOT = Path(__file__).resolve().parent
 CAPTURES_DIR = ROOT / "captures" / "gantry_1"
@@ -22,40 +29,21 @@ RETRY_INTERVAL_SECONDS = 3
 EV_CARPLATES_CSV = ROOT / "ev_carplates.csv"
 DEFAULT_CAR_TYPE = "ICE"
 
+def get_nicla_capture_url() -> str:
+    nicla_ip = input("Enter Nicla IP (shown in OpenMV boot log): ").strip()
+    return f"http://{nicla_ip}:{NICLA_PORT}/capture"
 
 def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
 
-def read_line(ser: serial.Serial) -> str:
-    line = ser.readline()
-    if not line:
-        return ""
-    return line.decode("utf-8", errors="ignore").strip()
-
-
-def read_exact(ser: serial.Serial, size: int) -> bytes:
-    data = b""
-    while len(data) < size:
-        chunk = ser.read(size - len(data))
-        if not chunk:
-            raise TimeoutError(
-                f"Timed out while reading image bytes "
-                f"({len(data)}/{size} received)"
-            )
-        data += chunk
-    return data
-
-
-def parse_img_header(header: str) -> int:
-    # Expected: IMG|12345
-    parts = header.split("|")
-    if len(parts) != 2 or parts[0] != "IMG":
-        raise ValueError(f"Invalid image header: {header!r}")
-    size = int(parts[1])
-    if size <= 0:
-        raise ValueError(f"Invalid image size: {size}")
-    return size
+# =========================================================
+# REMOVED FOR WIFI:
+# - read_line(...)
+# - read_exact(...)
+# - parse_img_header(...)
+# These were only for USB serial protocol
+# =========================================================
 
 
 def looks_like_jpeg(data: bytes) -> bool:
@@ -80,57 +68,6 @@ def save_image(image_bytes: bytes, attempt_no: int | None = None) -> tuple[Path,
     return archive_path, latest_path
 
 
-def drain_startup_lines(ser: serial.Serial, seconds: float = 1.5):
-    start = time.time()
-    while time.time() - start < seconds:
-        line = read_line(ser)
-        if line:
-            print("NICLA:", line)
-
-
-def ping_test(ser: serial.Serial) -> bool:
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-
-    ser.write(b"ping\n")
-    ser.flush()
-
-    start = time.time()
-    while time.time() - start < 2:
-        line = read_line(ser)
-        if line:
-            print("NICLA:", line)
-            if line == "pong":
-                return True
-    return False
-
-
-def request_capture(ser: serial.Serial) -> bytes:
-    ser.reset_input_buffer()
-
-    ser.write(b"capture\n")
-    ser.flush()
-
-    header = read_line(ser)
-    if not header:
-        raise TimeoutError("No response header from Nicla")
-
-    print("NICLA:", header)
-
-    if header.startswith("ERROR|"):
-        raise RuntimeError(header)
-
-    size = parse_img_header(header)
-    print(f"Expecting {size} bytes...")
-
-    image_bytes = read_exact(ser, size)
-
-    if not looks_like_jpeg(image_bytes):
-        raise ValueError("Payload does not look like a valid JPEG")
-
-    return image_bytes
-
-
 def run_ocr(ocr_engine: OcrEngine, image_path: Path) -> dict:
     result = ocr_engine.process_image(image_path)
 
@@ -142,16 +79,42 @@ def run_ocr(ocr_engine: OcrEngine, image_path: Path) -> dict:
         "confidence_percentage": confidence_percentage,
     }
 
+
 def get_iso_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def capture_and_ocr_with_retries(ser: serial.Serial, ocr_engine: OcrEngine) -> dict:
+
+# =========================================================
+# CHANGED FOR WIFI:
+# New function replaces request_capture(ser)
+# Instead of sending "capture" over serial,
+# backend calls Nicla HTTP endpoint and gets JPEG bytes back
+# =========================================================
+def request_capture_over_http(nicla_capture_url: str) -> bytes:
+    print(f"[*] Requesting image from Nicla: {nicla_capture_url}")
+
+    response = requests.get(nicla_capture_url, timeout=20)
+    response.raise_for_status()
+
+    image_bytes = response.content
+
+    if not looks_like_jpeg(image_bytes):
+        raise ValueError("Response from Nicla is not a valid JPEG")
+
+    return image_bytes
+
+# =========================================================
+# CHANGED FOR WIFI:
+# Function signature no longer takes 'ser'
+# Retry logic stays here in backend
+# =========================================================
+def capture_and_ocr_with_retries(ocr_engine: OcrEngine, nicla_capture_url: str) -> dict:
     last_result = None
 
     for attempt in range(1, MAX_CAPTURE_ATTEMPTS + 1):
         print(f"\n--- Attempt {attempt}/{MAX_CAPTURE_ATTEMPTS} ---")
 
-        image_bytes = request_capture(ser)
+        image_bytes = request_capture_over_http(nicla_capture_url)
         archive_path, latest_path = save_image(image_bytes, attempt_no=attempt)
 
         print(f"Saved: {archive_path}")
@@ -221,10 +184,12 @@ def check_car_type(carplate_num: str, ev_carplates: set[str]) -> str:
     normalized = normalize_plate_text(carplate_num)
     return "EV" if normalized in ev_carplates else DEFAULT_CAR_TYPE
 
+
 def send_to_api(carplate_num: str, car_type: str) -> dict:
     payload = {
         "carplate": carplate_num,
         "type": car_type,
+        "action":"entered",
         "time_entered": get_iso_utc_now(),
     }
 
@@ -235,7 +200,8 @@ def send_to_api(carplate_num: str, car_type: str) -> dict:
         return response.json()
     except Exception:
         return {"status_code": response.status_code, "text": response.text}
-    
+
+
 def main():
     ensure_dir(CAPTURES_DIR)
 
@@ -247,63 +213,62 @@ def main():
     ev_carplates = load_ev_carplates(EV_CARPLATES_CSV)
     print(f"[+] Loaded {len(ev_carplates)} EV carplate(s).")
 
-    print(f"Opening {PORT}...")
+    # =====================================================
+    # CHANGED FOR WIFI:
+    # Removed serial open / startup drain / ping test
+    # Just print the Nicla URL we will call
+    # =====================================================
+    nicla_capture_url = get_nicla_capture_url()
 
-    with serial.Serial(PORT, BAUDRATE, timeout=2) as ser:
-        time.sleep(2)
+    print("[*] Wireless capture pipeline ready.")
+    print(f"[*] Nicla capture URL: {NICLA_CAPTURE_URL}")
+    print("Type 'c' to capture, 'q' to quit.")
 
-        print("Reading startup lines...")
-        drain_startup_lines(ser)
+    while True:
+        cmd = input(">> ").strip().lower()
 
-        print("Running ping test...")
-        if not ping_test(ser):
-            print("FAIL: could not ping Nicla.")
-            return
+        if cmd == "q":
+            print("Exiting.")
+            break
 
-        print("SUCCESS: ping works.")
-        print("Type 'c' to capture, 'q' to quit.")
+        if cmd != "c":
+            print("Unknown command. Use 'c' or 'q'.")
+            continue
 
-        while True:
-            cmd = input(">> ").strip().lower()
+        try:
+            # =============================================
+            # CHANGED FOR WIFI:
+            # no more 'ser' argument
+            # =============================================
+            final_result = capture_and_ocr_with_retries(ocr_engine, nicla_capture_url)
 
-            if cmd == "q":
-                print("Exiting.")
-                break
+            carplate_num = final_result["carplate_num"]
+            confidence_percentage = final_result["confidence_percentage"]
 
-            if cmd != "c":
-                print("Unknown command. Use 'c' or 'q'.")
+            if carplate_num is None:
+                print("[!] No valid carplate found after retries. Not sending to API.")
                 continue
 
-            try:
-                final_result = capture_and_ocr_with_retries(ser, ocr_engine)
+            if confidence_percentage < OCR_CONFIDENCE_THRESHOLD:
+                print(
+                    f"[!] Best confidence ({confidence_percentage}%) is still below "
+                    f"threshold ({OCR_CONFIDENCE_THRESHOLD}%). Not sending to API."
+                )
+                continue
 
-                carplate_num = final_result["carplate_num"]
-                confidence_percentage = final_result["confidence_percentage"]
+            car_type = check_car_type(carplate_num, ev_carplates)
+            print(f"[*] Car type determined: {car_type}")
 
-                if carplate_num is None:
-                    print("[!] No valid carplate found after retries. Not sending to API.")
-                    continue
+            print("[*] Sending result to API...")
+            api_response = send_to_api(carplate_num, car_type)
 
-                if confidence_percentage < OCR_CONFIDENCE_THRESHOLD:
-                    print(
-                        f"[!] Best confidence ({confidence_percentage}%) is still below "
-                        f"threshold ({OCR_CONFIDENCE_THRESHOLD}%). Not sending to API."
-                    )
-                    continue
+            print("[+] API POST successful.")
+            print("API response:", api_response)
 
-                car_type = check_car_type(carplate_num, ev_carplates)
-                print(f"[*] Car type determined: {car_type}")
-
-                print("[*] Sending result to API...")
-                api_response = send_to_api(carplate_num, car_type)
-
-                print("[+] API POST successful.")
-                print("API response:", api_response)
-
-            except requests.RequestException as e:
-                print("[!] API request failed:", e)
-            except Exception as e:
-                print("[!] Capture/OCR pipeline failed:", e)
+        except requests.RequestException as e:
+            print("[!] HTTP/API request failed:", e)
+        except Exception as e:
+            print("[!] Capture/OCR pipeline failed:", e)
 
 
 if __name__ == "__main__":
