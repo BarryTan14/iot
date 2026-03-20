@@ -9,8 +9,7 @@ from paddleocr import PaddleOCR
 
 
 class OcrEngine:
-    def __init__(self, confidence_threshold: float = 0.85) -> None:
-        self.confidence_threshold = confidence_threshold
+    def __init__(self) -> None:
         self.ocr = PaddleOCR(
             lang="en",
             use_doc_orientation_classify=False,
