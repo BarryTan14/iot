@@ -1,19 +1,54 @@
-{% extends "evicted_frontend/base.html" %}
+{% extends "evicted/base.html" %}
 {% load static %}
-{% block title %}QR live – Lot {{ lot_number|default:"all" }}{% endblock %}
+{% block title %}Lot {{ lot_number }} – Parking{% endblock %}
 {% block extra_head %}
 <meta name="csrf-token" content="{{ csrf_token }}">
+<style>
+    body { background: #f3f4f6; }
+    .kiosk-card {
+        border-radius: 12px;
+        background: #fff;
+        padding: 2rem 1.5rem 1.5rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        border: 4px solid transparent;
+    }
+    .kiosk-card.ice-allowed { border-color: #7c3aed; }
+    .kiosk-card.ev-only     { border-color: #16a34a; }
+    .kiosk-card.lot-taken   { border-color: #dc2626; }
+
+    .lot-title {
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin: 0 0 0.4rem;
+        color: #111827;
+    }
+    .lot-status {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin: 0 0 1.25rem;
+    }
+    .kiosk-card.ice-allowed .lot-status { color: #7c3aed; }
+    .kiosk-card.ev-only     .lot-status { color: #16a34a; }
+    .kiosk-card.lot-taken   .lot-status { color: #dc2626; }
+
+    .lot-occupancy {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 1.25rem;
+    }
+
+    #qr-live-timer { color: #6b7280; margin-top: 0.75rem; }
+</style>
 {% endblock %}
 {% block content %}
-<section class="card" id="qr-live-section">
-    <h2>Parking form – scan to open</h2>
-    {% if lot_number %}
-    <p>Lot {{ lot_number }}</p>
-    {% else %}
-    <p>Scan a code to open the form for your lot.</p>
-    {% endif %}
-    <p id="qr-live-status" class="muted">Waiting for trigger…</p>
-    <p id="qr-live-timer" class="muted" style="display: none;">Submit form within: <strong id="qr-live-timer-value">{{ timer_initial }}</strong></p>
+<div id="kiosk-card" class="kiosk-card {% if lot_occupied %}lot-taken{% elif carpark.ice_allowed %}ice-allowed{% else %}ev-only{% endif %}">
+    <h1 class="lot-title">{% if lot_number %}Lot {{ lot_number }}{% else %}Parking{% endif %}</h1>
+    <p id="lot-status" class="lot-status">
+        {% if lot_occupied %}✗ Lot is taken{% elif carpark.ice_allowed %}✓ ICE vehicles may park here{% else %}✓ EV vehicles only{% endif %}
+    </p>
+    <p id="lot-occupancy" class="lot-occupancy">{{ carpark.occupied_lots }} / {{ carpark.total_lots }} lots occupied</p>
+
+    <p id="qr-live-timer" style="display: none;">Submit form within: <strong id="qr-live-timer-value">{{ timer_initial }}</strong></p>
     <div id="qr-live-codes" class="qr-grid" style="display: none;">
         {% for lot in lot_numbers %}
         <div class="qr-item" data-lot="{{ lot }}">
@@ -22,7 +57,7 @@
         </div>
         {% endfor %}
     </div>
-</section>
+</div>
 {% endblock %}
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
@@ -37,12 +72,12 @@
     var PAGE_LOT = CONFIG.page_lot;
     var WS_URL = CONFIG.ws_url || "";
 
-    console.log("[QR live] init", { PAGE_LOT: PAGE_LOT, WARNING_MS: WARNING_MS, WS_URL: WS_URL });
-
-    const statusEl = document.getElementById("qr-live-status");
-    const codesEl = document.getElementById("qr-live-codes");
-    const timerEl = document.getElementById("qr-live-timer");
-    const timerValueEl = document.getElementById("qr-live-timer-value");
+    var cardEl        = document.getElementById("kiosk-card");
+    var statusEl      = document.getElementById("lot-status");
+    var occupancyEl   = document.getElementById("lot-occupancy");
+    var codesEl       = document.getElementById("qr-live-codes");
+    var timerEl       = document.getElementById("qr-live-timer");
+    var timerValueEl  = document.getElementById("qr-live-timer-value");
     var noSubmitWarningTimer = null;
     var countdownInterval = null;
     var currentTriggeredAt = null;
@@ -70,15 +105,11 @@
         if (PAGE_LOT !== null && currentTriggeredAt) {
             var csrf = document.querySelector('meta[name="csrf-token"]');
             var token = csrf ? csrf.getAttribute('content') : '';
-            var body = JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT });
             fetch(API_ALERT_NO_SUBMISSION, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": token || "" },
-                body: body,
-            })
-                .then(function(r) { return r.json(); })
-                .then(function(data) { console.log("[QR live] no-submission API response", data); })
-                .catch(function(err) { console.log("[QR live] no-submission API error", err); });
+                body: JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT }),
+            }).catch(function() {});
         }
     }
 
@@ -101,10 +132,7 @@
     }
 
     function stopCountdown() {
-        if (countdownInterval) {
-            clearInterval(countdownInterval);
-            countdownInterval = null;
-        }
+        if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
         if (timerEl) timerEl.style.display = "none";
         if (timerValueEl) timerValueEl.textContent = CONFIG.timer_initial || "0:10";
     }
@@ -113,18 +141,12 @@
         if (typeof QRCode === "undefined" || !lotUrls) return;
         var wasHidden = codesEl.style.display === "none";
         if (triggeredAt) currentTriggeredAt = triggeredAt;
-        console.log("[QR live] showQrCodes", { wasHidden: wasHidden, triggeredAt: triggeredAt, currentTriggeredAt: currentTriggeredAt });
         codesEl.style.display = "";
-        statusEl.textContent = "Scan a code to open the parking form.";
-        LOT_NUMBERS.forEach(function(lot) {
-            drawQr("qrcode-" + lot, lotUrls[String(lot)]);
-        });
+        LOT_NUMBERS.forEach(function(lot) { drawQr("qrcode-" + lot, lotUrls[String(lot)]); });
         if (wasHidden) {
             if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
-            console.log("[QR live] starting timer", WARNING_MS, "ms");
             startCountdown(Date.now() + WARNING_MS);
             noSubmitWarningTimer = setTimeout(function() {
-                console.log("[QR live] timer fired");
                 noSubmitWarningTimer = null;
                 stopCountdown();
                 if (codesEl.style.display !== "none") onTimerExpired();
@@ -134,57 +156,49 @@
 
     function hideQrCodes() {
         currentTriggeredAt = null;
-        if (noSubmitWarningTimer) {
-            clearTimeout(noSubmitWarningTimer);
-            noSubmitWarningTimer = null;
-        }
+        if (noSubmitWarningTimer) { clearTimeout(noSubmitWarningTimer); noSubmitWarningTimer = null; }
         stopCountdown();
         codesEl.style.display = "none";
-        statusEl.textContent = "Waiting for trigger…";
         LOT_NUMBERS.forEach(function(lot) {
-            var container = document.getElementById("qrcode-" + lot);
-            if (container) container.innerHTML = "";
+            var c = document.getElementById("qrcode-" + lot);
+            if (c) c.innerHTML = "";
         });
     }
 
     function shouldShowForThisPage(triggeredLot) {
-        if (PAGE_LOT === null) {
-            return triggeredLot === null;
-        }
+        if (PAGE_LOT === null) return triggeredLot === null;
         return triggeredLot === PAGE_LOT;
+    }
+
+    function updateCapacity(data) {
+        var lotOccupied = data.lots_occupied && PAGE_LOT !== null ? !!data.lots_occupied[String(PAGE_LOT)] : false;
+        var iceAllowed = data.ice_allowed;
+        var stateClass = lotOccupied ? "lot-taken" : (iceAllowed ? "ice-allowed" : "ev-only");
+        var statusText = lotOccupied ? "✗ Lot is taken" : (iceAllowed ? "✓ ICE vehicles may park here" : "✓ EV vehicles only");
+        if (cardEl)      cardEl.className = "kiosk-card " + stateClass;
+        if (statusEl)    statusEl.textContent = statusText;
+        if (occupancyEl) occupancyEl.textContent = data.occupied_lots + " / " + data.total_lots + " lots occupied";
     }
 
     function connectWs() {
         if (!WS_URL) return;
         var ws = new WebSocket(WS_URL);
-        ws.onopen = function() {
-            console.log("[QR live] WebSocket connected");
-        };
+        ws.onopen = function() { console.log("[QR live] WebSocket connected"); };
         ws.onmessage = function(ev) {
             try {
                 var data = JSON.parse(ev.data);
-                if (data.show_qr === false) {
-                    hideQrCodes();
-                    return;
-                }
+                if (data.type === "capacity_update") { updateCapacity(data); return; }
+                if (data.show_qr === false) { hideQrCodes(); return; }
                 if (data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot)) {
                     showQrCodes(data.lot_urls, data.triggered_at);
                 }
-            } catch (e) {
-                console.log("[QR live] WebSocket message parse error", e);
-            }
+            } catch (e) { console.log("[QR live] parse error", e); }
         };
-        ws.onclose = function() {
-            console.log("[QR live] WebSocket closed, reconnecting in 3s");
-            setTimeout(connectWs, 3000);
-        };
-        ws.onerror = function() {
-            ws.close();
-        };
+        ws.onclose = function() { setTimeout(connectWs, 3000); };
+        ws.onerror = function() { ws.close(); };
     }
 
     connectWs();
 })();
 </script>
 {% endblock %}
-

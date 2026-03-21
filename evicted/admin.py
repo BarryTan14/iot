@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import EVLot, Car, ParkingLot, WorkflowTrigger
+from .models import EVLot, Car, ParkingLot
 
 
 @admin.register(EVLot)
@@ -21,7 +21,3 @@ class ParkingLotAdmin(admin.ModelAdmin):
     list_display = ("lot_number", "occupied")
     list_editable = ("occupied",)
 
-
-@admin.register(WorkflowTrigger)
-class WorkflowTriggerAdmin(admin.ModelAdmin):
-    list_display = ("triggered_at", "lot_number")

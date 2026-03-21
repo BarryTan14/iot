@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("evicted_frontend", "0004_remove_old_tables"),
+        ("evicted", "0004_remove_old_tables"),
     ]
 
     operations = [

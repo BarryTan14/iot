@@ -12,4 +12,4 @@ echo "=== Collecting static files ==="
 python manage.py collectstatic --noinput || true
 
 echo "=== Starting Daphne (ASGI for WebSockets) ==="
-exec daphne -b 0.0.0.0 -p "$PORT" evicted.asgi:application
+exec daphne -b 0.0.0.0 -p "$PORT" config.asgi:application

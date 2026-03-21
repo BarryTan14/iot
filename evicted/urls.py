@@ -1,23 +1,23 @@
-"""
-URL configuration for evicted project.
+from django.urls import path
+from . import views
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-from django.contrib import admin
-from django.urls import path, include
+app_name = 'evicted'
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('', include('evicted_frontend.urls', namespace='evicted_frontend')),
+    path("", views.index, name="index"),
+    path("dashboard/", views.dashboard, name="dashboard"),
+    path("form/", views.form_page, name="form"),
+    path("form/<str:lot_number>/", views.form_page, name="form_with_lot"),
+    path("success/", views.success, name="success"),
+    path("api/trigger-workflow/", views.trigger_workflow, name="trigger_workflow"),
+    path("api/qr-display/", views.qr_display_api, name="qr_display_api"),
+    path("qr/", views.qr_page, name="qr_page"),
+    path("qr/live/<int:lot_number>/", views.qr_live, name="qr_live_lot"),
+    path("api/carpark-status/", views.carpark_status_api, name="carpark_status"),
+    path("api/alert-no-submission/", views.alert_no_submission, name="alert_no_submission"),
+    path("api/submit-form/", views.submit_form, name="submit_form"),
+    path("api/update-time-car-left/", views.update_time_car_left, name="update_time_car_left"),
+    path("api/cars/", views.create_car, name="create_car"),
+    path("api/check-carplate/", views.check_carplate, name="check_carplate"),
+    path("api/queue-sms/", views.queue_sms, name="queue_sms"),
 ]

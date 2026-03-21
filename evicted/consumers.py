@@ -36,3 +36,7 @@ class QrLiveConsumer(AsyncWebsocketConsumer):
     async def qr_trigger(self, event):
         """Send the trigger payload to the WebSocket (called from channel layer)."""
         await self.send(text_data=json.dumps(event.get("payload", {})))
+
+    async def capacity_update(self, event):
+        """Send capacity status update to the WebSocket (called from channel layer)."""
+        await self.send(text_data=json.dumps(event.get("payload", {})))

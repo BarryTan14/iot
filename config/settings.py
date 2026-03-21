@@ -46,7 +46,7 @@ CSRF_TRUSTED_ORIGINS = [
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # Application definition
-ASGI_APPLICATION = "evicted.asgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
 INSTALLED_APPS = [
     "daphne",
@@ -56,7 +56,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'evicted_frontend',
+    'evicted',
 ]
 
 MIDDLEWARE = [
@@ -70,7 +70,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'evicted.urls'
+ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
     {
@@ -87,7 +87,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'evicted.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 CHANNEL_LAYERS = {
     "default": {
@@ -183,3 +183,5 @@ MQTT_ALERT_PHONE = os.environ.get("MQTT_ALERT_PHONE", "")
 
 # QR live page: countdown duration in seconds before "no submission" is reported (single source of truth)
 QR_LIVE_WARNING_SECONDS = int(os.environ.get("QR_LIVE_WARNING_SECONDS", "10"))
+
+# Carpark capacity: ICE vehicles are allowed in EV lots when at least one lot is free

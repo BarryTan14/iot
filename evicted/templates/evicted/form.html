@@ -1,4 +1,4 @@
-{% extends "evicted_frontend/base.html" %}
+{% extends "evicted/base.html" %}
 {% load static %}
 {% block title %}Parking form{% endblock %}
 {% block content %}
@@ -75,13 +75,6 @@
     var triggeredAtFromUrl = urlParams.get("triggered_at");
     if (triggeredAtFromUrl) {
         setTimeParked(triggeredAtFromUrl);
-    } else {
-        fetch("{% url 'evicted_frontend:last_trigger' %}")
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.triggered_at) setTimeParked(data.triggered_at);
-            })
-            .catch(function() {});
     }
 
     if (form) {
@@ -90,7 +83,7 @@
             formStatus.textContent = "Submitting…";
             const fd = new FormData(form);
             if (lotDisplay && lotDisplay.value) fd.set("lot_number", lotDisplay.value);
-            fetch("{% url 'evicted_frontend:submit_form' %}", { method: "POST", body: fd })
+            fetch("{% url 'evicted:submit_form' %}", { method: "POST", body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.ok && data.redirect) {

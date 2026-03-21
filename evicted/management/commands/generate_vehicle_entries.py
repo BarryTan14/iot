@@ -3,7 +3,7 @@ import random
 from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from evicted_frontend.models import Car
+from evicted.models import Car
 
 
 class Command(BaseCommand):

@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("evicted_frontend", "0002_add_vehicle_entry"),
+        ("evicted", "0002_add_vehicle_entry"),
     ]
 
     operations = [

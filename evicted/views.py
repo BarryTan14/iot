@@ -11,7 +11,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import EVLot, Car, ParkingLot, WorkflowTrigger
+from .models import EVLot, Car, ParkingLot
 from .mqtt_client import publish_sms_event, publish_trigger_event
 from .sms_client import send_sms
 from .consumers import qr_lot_group_name
@@ -34,7 +34,7 @@ def index(request):
     for n in LOT_NUMBERS:
         ParkingLot.objects.get_or_create(lot_number=str(n), defaults={"occupied": False})
     parking_lots = ParkingLot.objects.all().order_by("lot_number")
-    return render(request, "evicted_frontend/index.html", {
+    return render(request, "evicted/index.html", {
         "form_url": form_url,
         "ev_lots": ev_lots,
         "cars": cars,
@@ -43,28 +43,146 @@ def index(request):
 
 
 def dashboard(request):
-    """Dashboard: cars currently parked (EV lots) and cars that entered the gantry."""
-    parked = (
-        EVLot.objects.filter(time_left__isnull=True)
-        .order_by("-time_parked")
+    """Dashboard: carpark visual, gantry chart, and analytics."""
+    from datetime import timezone as dt_timezone
+    from django.db.models import ExpressionWrapper, F, DurationField, Q
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+    for n in LOT_NUMBERS:
+        ParkingLot.objects.get_or_create(lot_number=str(n), defaults={"occupied": False})
+    parking_lots = ParkingLot.objects.all().order_by("lot_number")
+
+    enriched_lots = []
+    for lot in parking_lots:
+        occupant = (
+            EVLot.objects.filter(lot_number=lot.lot_number, time_left__isnull=True)
+            .order_by("-created_at").first()
+        )
+        car_type = None
+        if occupant:
+            car = Car.objects.filter(carplate__iexact=occupant.carplate).order_by("-time_entered").first()
+            car_type = car.type if car else "EV"
+        enriched_lots.append({"lot": lot, "occupant": occupant, "car_type": car_type})
+
+    gantry_entries = Car.objects.all().order_by("-time_entered")[:20]
+    occupied_count = sum(1 for item in enriched_lots if item["lot"].occupied)
+    ice_in_ev_count = sum(1 for item in enriched_lots if item["car_type"] == "ICE")
+
+    local_tz = timezone.get_current_timezone()
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(local_tz)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_local.astimezone(dt_timezone.utc)
+
+    # ── Hourly gantry chart + EV/ICE split ───────────────────────────────────
+    cars_today = list(Car.objects.filter(time_entered__gte=today_start_utc))
+    hourly_counts = [0] * 24
+    hourly_ev    = [0] * 24
+    hourly_ice   = [0] * 24
+    for c in cars_today:
+        h = c.time_entered.astimezone(local_tz).hour
+        hourly_counts[h] += 1
+        if c.type == "EV":
+            hourly_ev[h] += 1
+        else:
+            hourly_ice[h] += 1
+
+    # ── 1. Dwell time distribution ───────────────────────────────────────────
+    def _fmt_secs(s):
+        h, r = divmod(int(s), 3600)
+        m = r // 60
+        return f"{h}h {m}m" if h else f"{m}m"
+
+    completed = list(
+        Car.objects.filter(time_left__isnull=False)
+        .annotate(dur=ExpressionWrapper(F("time_left") - F("time_entered"), output_field=DurationField()))
     )
-    gantry_entries = Car.objects.all().order_by("-time_entered")[:100]
-    return render(request, "evicted_frontend/dashboard.html", {
-        "parked": parked,
+    dur_secs = sorted(c.dur.total_seconds() for c in completed if c.dur.total_seconds() >= 0)
+    if dur_secs:
+        n = len(dur_secs)
+        dwell_avg    = _fmt_secs(sum(dur_secs) / n)
+        dwell_median = _fmt_secs(dur_secs[n // 2] if n % 2 else (dur_secs[n//2 - 1] + dur_secs[n//2]) / 2)
+        overstay_count = sum(1 for s in dur_secs if s > 4 * 3600)
+    else:
+        dwell_avg = dwell_median = "N/A"
+        overstay_count = 0
+
+    # ── 3. Per-lot utilisation ────────────────────────────────────────────────
+    elapsed_today_secs = (now_utc - today_start_utc).total_seconds()
+    lot_utilisation = {}
+    for lot_num in LOT_NUMBERS:
+        records = EVLot.objects.filter(
+            lot_number=str(lot_num),
+            time_parked__lt=now_utc,
+        ).filter(Q(time_left__isnull=True) | Q(time_left__gt=today_start_utc))
+        occ_secs = 0.0
+        for r in records:
+            start = max(r.time_parked, today_start_utc)
+            end   = min(r.time_left if r.time_left else now_utc, now_utc)
+            if end > start:
+                occ_secs += (end - start).total_seconds()
+        lot_utilisation[str(lot_num)] = min(
+            round(occ_secs / elapsed_today_secs * 100, 1) if elapsed_today_secs > 0 else 0.0,
+            100.0,
+        )
+
+    # ── 5. ICE pressure — minutes today all lots were simultaneously full ─────
+    evlots_today = list(EVLot.objects.filter(
+        time_parked__lt=now_utc,
+    ).filter(Q(time_left__isnull=True) | Q(time_left__gt=today_start_utc)))
+
+    boundary_times = sorted({today_start_utc, now_utc} | {
+        t
+        for ev in evlots_today
+        for t in (
+            max(ev.time_parked, today_start_utc),
+            min(ev.time_left if ev.time_left else now_utc, now_utc),
+        )
+    })
+    full_capacity_secs = 0.0
+    for i in range(len(boundary_times) - 1):
+        mid = boundary_times[i] + (boundary_times[i + 1] - boundary_times[i]) / 2
+        occupied_lots = {
+            str(ev.lot_number)
+            for ev in evlots_today
+            if max(ev.time_parked, today_start_utc) <= mid < (ev.time_left if ev.time_left else now_utc)
+        }
+        if len(occupied_lots) >= len(LOT_NUMBERS):
+            full_capacity_secs += (boundary_times[i + 1] - boundary_times[i]).total_seconds()
+    ice_pressure_mins = round(full_capacity_secs / 60)
+
+    return render(request, "evicted/dashboard.html", {
+        # existing
+        "enriched_lots": enriched_lots,
         "gantry_entries": gantry_entries,
+        "occupied_count": occupied_count,
+        "free_count": len(enriched_lots) - occupied_count,
+        "ice_in_ev_count": ice_in_ev_count,
+        "total_lots": len(enriched_lots),
+        "hourly_counts_json": json.dumps(hourly_counts),
+        "chart_date": now_local.strftime("%B %d, %Y"),
+        "total_today": sum(hourly_counts),
+        # new
+        "hourly_ev_json":  json.dumps(hourly_ev),
+        "hourly_ice_json": json.dumps(hourly_ice),
+        "dwell_avg": dwell_avg,
+        "dwell_median": dwell_median,
+        "overstay_count": overstay_count,
+        "lot_utilisation": lot_utilisation,
+        "ice_pressure_mins": ice_pressure_mins,
     })
 
 
 def form_page(request, lot_number=""):
     """Form page. Lot number can come from URL path or query ?lot=."""
     lot = request.GET.get("lot", lot_number) or ""
-    return render(request, "evicted_frontend/form.html", {"lot_number": lot})
+    return render(request, "evicted/form.html", {"lot_number": lot})
 
 
 def success(request):
     """Success page after form submission."""
     database = request.GET.get("database", "unknown")
-    return render(request, "evicted_frontend/success.html", {"database": database})
+    return render(request, "evicted/success.html", {"database": database})
 
 
 LOT_NUMBERS = [1, 2, 3]
@@ -113,7 +231,7 @@ def qr_page(request):
     """Minimal page that only shows QR codes for the form (for kiosks/iframes)."""
     payload = _qr_display_payload(request)
     payload["lot_urls_json"] = json.dumps(payload["lot_urls"])
-    return render(request, "evicted_frontend/qr_display.html", payload)
+    return render(request, "evicted/qr_display.html", payload)
 
 
 def qr_live(request, lot_number=None):
@@ -141,19 +259,24 @@ def qr_live(request, lot_number=None):
     else:
         ws_path = "/ws/qr-live/"
     ws_url = f"{scheme}://{host}{ws_path}"
+    carpark = _carpark_status()
+    lot_occupied = carpark["lots_occupied"].get(str(lot_number), False) if lot_number else False
     qr_live_config = {
         "api_alert_no_submission": api_base + "/alert-no-submission/",
+        "api_carpark_status": api_base + "/carpark-status/",
         "warning_seconds": warning_seconds,
         "timer_initial": timer_initial,
         "lot_numbers": lot_numbers,
         "page_lot": lot_number,
         "ws_url": ws_url,
     }
-    return render(request, "evicted_frontend/qr_live.html", {
+    return render(request, "evicted/qr_live.html", {
         "qr_live_config": qr_live_config,
         "timer_initial": timer_initial,
         "lot_number": lot_number,
         "lot_numbers": lot_numbers,
+        "carpark": carpark,
+        "lot_occupied": lot_occupied,
     })
 
 
@@ -416,6 +539,7 @@ def _handle_car_left(lot_number, time_car_left_str=None):
     ev_lot.save(update_fields=["time_left"])
     ParkingLot.objects.filter(lot_number=lot_number).update(occupied=False)
     _send_qr_trigger_websocket(lot_number, {"show_qr": False})
+    _send_capacity_update_websocket()
     return True, {
         "ok": True,
         "id": ev_lot.pk,
@@ -424,68 +548,47 @@ def _handle_car_left(lot_number, time_car_left_str=None):
     }, 200
 
 
-def _triggered_lot_from_trigger(trigger):
-    """Return the triggered lot as int (1–3) or None if not set/invalid."""
-    if not trigger or not trigger.lot_number:
-        return None
-    raw = str(trigger.lot_number).strip()
-    if raw and raw.isdigit():
-        n = int(raw)
-        if n in LOT_NUMBERS:
-            return n
-    return None
 
 
-@require_GET
-def qr_status(request):
-    """
-    API: Whether the live page should show QR codes. Used by /qr/live/ to poll.
-    show_qr is True only if there was a recent trigger AND no form submission since that trigger.
-    triggered_lot: when the trigger had ?lot=1 (or 2/3), only the matching /qr/live/<n>/ page may show QR.
-    When someone submits the form (after scanning), show_qr becomes False so the live page resets.
-    """
-    recent_minutes = int(request.GET.get("minutes", "10")) or 10
-    trigger = WorkflowTrigger.objects.first()
-    submission = EVLot.objects.first()
-    payload = _qr_display_payload(request)
-    if not trigger:
-        return JsonResponse({"show_qr": False, "triggered_at": None, "triggered_lot": None, **payload})
-    triggered_at = trigger.triggered_at
-    triggered_lot = _triggered_lot_from_trigger(trigger)
-    submitted_after_trigger = (
-        submission is not None and submission.created_at > triggered_at
-    )
-    cutoff = timezone.now() - timezone.timedelta(minutes=recent_minutes)
-    trigger_recent = triggered_at >= cutoff
-    show_qr = trigger_recent and not submitted_after_trigger
-    if show_qr and triggered_lot is not None:
-        lot_submission = EVLot.objects.filter(lot_number=str(triggered_lot)).first()
-        if (
-            lot_submission is not None
-            and lot_submission.time_left is not None
-            and lot_submission.time_left >= triggered_at
-        ):
-            show_qr = False
-    response = {
-        "show_qr": show_qr,
-        "triggered_at": triggered_at.isoformat(),
-        "triggered_lot": triggered_lot,
-        "recent_minutes": recent_minutes,
-        **payload,
+
+def _carpark_status():
+    """Return current lot occupancy, per-lot status, and whether ICE cars are allowed.
+    ICE is allowed when there is at least one free lot."""
+    lots = ParkingLot.objects.all()
+    total_lots = len(lots)
+    occupied_lots = sum(1 for l in lots if l.occupied)
+    free_lots = total_lots - occupied_lots
+    ice_allowed = free_lots > 0
+    lots_occupied = {str(l.lot_number): l.occupied for l in lots}
+    return {
+        "occupied_lots": occupied_lots,
+        "total_lots": total_lots,
+        "free_lots": free_lots,
+        "ice_allowed": ice_allowed,
+        "lots_occupied": lots_occupied,
     }
-    resp = JsonResponse(response)
-    resp["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    resp["Pragma"] = "no-cache"
-    return resp
+
+
+def _send_capacity_update_websocket():
+    """Broadcast current carpark capacity status to all lot WebSocket groups."""
+    try:
+        status = _carpark_status()
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        message = {"type": "capacity_update", "payload": {"type": "capacity_update", **status}}
+        for lot in LOT_NUMBERS:
+            async_to_sync(channel_layer.group_send)(qr_lot_group_name(lot), message)
+    except Exception:
+        pass
 
 
 @require_GET
-def last_trigger(request):
-    """API: Get the most recent trigger time for pre-filling TimeParked."""
-    trigger = WorkflowTrigger.objects.first()
-    if not trigger:
-        return JsonResponse({"triggered_at": None})
-    return JsonResponse({"triggered_at": trigger.triggered_at.isoformat()})
+def carpark_status_api(request):
+    """API: Current carpark occupancy and whether ICE cars are allowed in EV lots."""
+    return JsonResponse({"ok": True, **_carpark_status()})
+
+
 
 
 @csrf_exempt
@@ -557,8 +660,7 @@ def submit_form(request):
         if time_parked_str:
             time_parked = parse_datetime(time_parked_str) or parse_date(time_parked_str)
         if not time_parked:
-            trigger = WorkflowTrigger.objects.first()
-            time_parked = trigger.triggered_at if trigger else timezone.now()
+            time_parked = timezone.now()
         else:
             if timezone.is_naive(time_parked):
                 time_parked = timezone.make_aware(time_parked)
@@ -596,6 +698,7 @@ def submit_form(request):
             lot_number=lot_number,
             defaults={"occupied": True},
         )
+        _send_capacity_update_websocket()
         db = _get_database_name()
         return JsonResponse({
             "ok": True,
@@ -611,23 +714,63 @@ def submit_form(request):
 @require_POST
 def create_car(request):
     """
-    API: Create a new record in the Cars table.
-    Body (JSON or form): carplate (required), type (required, "ICE" or "EV"), time_entered (ISO datetime, optional; default now).
+    API: Create or update a record in the Cars table.
+    Body (JSON or form):
+      - carplate (required)
+      - type (required for action "entered", "ICE" or "EV")
+      - action (optional): "entered" (default) | "left"
+      - time_entered (ISO datetime, optional; default now) — used when action is "entered"
+      - time_left (ISO datetime, optional; default now) — used when action is "left"
+
+    action "entered": creates a new Car record.
+    action "left": sets time_left on the most recent Car record for that carplate where time_left is null.
     """
+    from django.utils.dateparse import parse_datetime, parse_date
+
     data, err = _parse_request_body(request)
     if err:
         return JsonResponse({"ok": False, "error": err}, status=400)
     if not data:
         data = {}
+
     carplate = (data.get("carplate") or "").strip()
-    car_type = (data.get("type") or "").strip().upper()
     if not carplate:
         return JsonResponse({"ok": False, "error": "carplate is required."}, status=400)
+
+    action = (data.get("action") or "entered").strip().lower()
+    if action not in ("entered", "left"):
+        return JsonResponse({"ok": False, "error": "action must be 'entered' or 'left'."}, status=400)
+
+    if action == "left":
+        time_left_str = (data.get("time_left") or "").strip()
+        if time_left_str:
+            time_left = parse_datetime(time_left_str) or parse_date(time_left_str)
+            if not time_left:
+                return JsonResponse({"ok": False, "error": "Invalid time_left."}, status=400)
+            if timezone.is_naive(time_left):
+                time_left = timezone.make_aware(time_left)
+        else:
+            time_left = timezone.now()
+        car = Car.objects.filter(carplate__iexact=carplate, time_left__isnull=True).order_by("-time_entered").first()
+        if not car:
+            return JsonResponse({"ok": False, "error": "No active Car record found for that carplate."}, status=404)
+        car.time_left = time_left
+        car.save(update_fields=["time_left"])
+        return JsonResponse({
+            "ok": True,
+            "id": car.pk,
+            "carplate": car.carplate,
+            "type": car.type,
+            "time_entered": car.time_entered.isoformat(),
+            "time_left": car.time_left.isoformat(),
+        })
+
+    # action == "entered"
+    car_type = (data.get("type") or "").strip().upper()
     if car_type not in ("ICE", "EV"):
         return JsonResponse({"ok": False, "error": "type must be ICE or EV."}, status=400)
     time_entered_str = (data.get("time_entered") or "").strip()
     if time_entered_str:
-        from django.utils.dateparse import parse_datetime, parse_date
         time_entered = parse_datetime(time_entered_str) or parse_date(time_entered_str)
         if not time_entered:
             return JsonResponse({"ok": False, "error": "Invalid time_entered."}, status=400)

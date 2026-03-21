@@ -1,28 +1,20 @@
-{% extends "evicted_frontend/base.html" %}
+{% extends "evicted/base.html" %}
 {% load static %}
 {% block title %}Home{% endblock %}
 {% block content %}
 <h1>Parking – Staff</h1>
 <nav class="card" style="margin-bottom: 1rem;">
-    <p style="margin-bottom: 0.5rem;"><a href="{% url 'evicted_frontend:dashboard' %}" class="btn btn-secondary">Dashboard (parked & gantry)</a></p>
+    <p style="margin-bottom: 0.5rem;"><a href="{% url 'evicted:dashboard' %}" class="btn btn-secondary">Dashboard (parked & gantry)</a></p>
     <h2 style="margin-top: 0;">Live display</h2>
     <p class="muted" style="margin-bottom: 0.5rem;">Open the live QR page for a kiosk or screen.</p>
     <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">
-        <li><a href="{% url 'evicted_frontend:qr_live' %}" class="btn btn-secondary">Live – all lots</a></li>
-        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=1 %}" class="btn btn-secondary">Live – Lot 1</a></li>
-        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=2 %}" class="btn btn-secondary">Live – Lot 2</a></li>
-        <li><a href="{% url 'evicted_frontend:qr_live_lot' lot_number=3 %}" class="btn btn-secondary">Live – Lot 3</a></li>
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=1 %}" class="btn btn-secondary">Live – Lot 1</a></li>
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=2 %}" class="btn btn-secondary">Live – Lot 2</a></li>
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=3 %}" class="btn btn-secondary">Live – Lot 3</a></li>
     </ul>
 </nav>
-<section class="card">
-    <h2>1. Trigger workflow</h2>
-    <p>Click to record current time as “Time parked” (for testing).</p>
-    {% csrf_token %}
-    <button type="button" id="trigger-workflow" class="btn btn-primary">Trigger workflow</button>
-    <p id="trigger-status" class="muted"></p>
-</section>
-<section class="card" id="qr-section" style="display: none;">
-    <h2>2. QR codes for form</h2>
+<section class=”card” id=”qr-section”>
+    <h2>QR codes for form</h2>
     <p>Users scan to open the parking form. Each QR links to a specific lot.</p>
     <div class="qr-grid">
         <div class="qr-item">
@@ -107,6 +99,7 @@
                     <th>Car plate</th>
                     <th>Type</th>
                     <th>Time entered</th>
+                    <th>Time left</th>
                 </tr>
             </thead>
             <tbody>
@@ -115,6 +108,7 @@
                     <td>{{ c.carplate }}</td>
                     <td>{{ c.type }}</td>
                     <td>{{ c.time_entered|date:"M d, H:i" }}</td>
+                    <td>{% if c.time_left %}{{ c.time_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -130,9 +124,6 @@
 <script>
 (function() {
     const formUrlBase = "{{ form_url|escapejs }}";
-    const triggerBtn = document.getElementById("trigger-workflow");
-    const triggerStatus = document.getElementById("trigger-status");
-    const qrSection = document.getElementById("qr-section");
     const lots = [1, 2, 3];
 
     function drawQr(containerId, lotNum) {
@@ -147,27 +138,8 @@
         });
     }
 
-    function showAndDrawQrcodes() {
-        if (typeof QRCode === "undefined") return;
-        qrSection.style.display = "block";
-        lots.forEach(function(lot, i) {
-            drawQr("qrcode-" + (i + 1), lot);
-        });
-    }
-
-    if (triggerBtn) {
-        triggerBtn.addEventListener("click", function() {
-            triggerStatus.textContent = "Sending…";
-            var formData = new FormData();
-            formData.append("csrfmiddlewaretoken", document.querySelector("[name=csrfmiddlewaretoken]")?.value || "");
-            fetch("{% url 'evicted_frontend:trigger_workflow' %}", { method: "POST", body: formData })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    triggerStatus.textContent = data.ok ? "Triggered at " + (data.triggered_at || "") : (data.error || "Failed");
-                    if (data.ok) showAndDrawQrcodes();
-                })
-                .catch(function() { triggerStatus.textContent = "Request failed"; });
-        });
+    if (typeof QRCode !== "undefined") {
+        lots.forEach(function(lot, i) { drawQr("qrcode-" + (i + 1), lot); });
     }
 })();
 </script>
