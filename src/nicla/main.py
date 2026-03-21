@@ -65,33 +65,44 @@ def connect_wifi():
     log_file("CONNECT_WIFI: start")
 
     wlan = network.WLAN(network.STA_IF)
+    wlan.active(False)
+    time.sleep(1)
+
     wlan.active(True)
+    time.sleep(1)
     log_file("CONNECT_WIFI: wlan active")
+
+    try:
+        wlan.disconnect()
+    except Exception:
+        pass
 
     wlan.connect(SSID, PASSWORD)
     log_file("CONNECT_WIFI: connect called")
 
     print("Connecting to WiFi...")
-    log_file("CONNECT_WIFI: waiting for connection")
 
     attempts = 0
-    while not wlan.isconnected():
-        attempts += 1
-        log_file("CONNECT_WIFI: waiting {}".format(attempts))
-        time.sleep(1)
+    while True:
+        status = wlan.status()
+        log_file("CONNECT_WIFI: attempt {} status={}".format(attempts + 1, status))
+        print("Waiting for WiFi... attempt", attempts + 1, "status=", status)
 
-        if attempts >= 20:
-            log_file("CONNECT_WIFI: timeout")
+        if wlan.isconnected():
+            ip = wlan.ifconfig()[0]
+            print("Connected!")
+            print("IP:", ip)
+            log_file("CONNECT_WIFI: connected ip={}".format(ip))
+            return ip
+
+        if status < 0:
+            raise Exception("WiFi connect failed, status={}".format(status))
+
+        attempts += 1
+        if attempts >= 30:
             raise Exception("WiFi connection timeout")
 
-    ip = wlan.ifconfig()[0]
-
-    print("Connected!")
-    print("IP:", ip)
-
-    log_file("CONNECT_WIFI: connected ip={}".format(ip))
-    return ip
-
+        time.sleep(1)
 
 # -----------------------------
 # CAPTURE IMAGE
@@ -200,11 +211,11 @@ def main():
     log_file("BOOT: main start")
 
     try:
-        init_camera()
-        log_file("BOOT: camera ok")
-
         ip = connect_wifi()
         log_file("BOOT: wifi ok ip={}".format(ip))
+
+        init_camera()
+        log_file("BOOT: camera ok")
 
         print("Camera server ready")
         print("Capture URL:")

@@ -33,6 +33,13 @@ def get_nicla_capture_url() -> str:
     nicla_ip = input("Enter Nicla IP (shown in OpenMV boot log): ").strip()
     return f"http://{nicla_ip}:{NICLA_PORT}/capture"
 
+def get_camera_role() -> str:
+    while True:
+        role = input("Enter role (entered/left): ").strip().lower()
+        if role in ("entered", "left"):
+            return role
+        print("Invalid role. Enter 'entered' or 'left'.")
+        
 def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
@@ -93,7 +100,7 @@ def get_iso_utc_now() -> str:
 def request_capture_over_http(nicla_capture_url: str) -> bytes:
     print(f"[*] Requesting image from Nicla: {nicla_capture_url}")
 
-    response = requests.get(nicla_capture_url, timeout=20)
+    response = requests.get(nicla_capture_url, timeout=15)
     response.raise_for_status()
 
     image_bytes = response.content
@@ -185,22 +192,37 @@ def check_car_type(carplate_num: str, ev_carplates: set[str]) -> str:
     return "EV" if normalized in ev_carplates else DEFAULT_CAR_TYPE
 
 
-def send_to_api(carplate_num: str, car_type: str) -> dict:
-    payload = {
-        "carplate": carplate_num,
-        "type": car_type,
-        "action":"entered",
-        "time_entered": get_iso_utc_now(),
-    }
+def send_to_api(carplate_num: str, action: str, car_type: str | None = None) -> dict:
+    if action == "entered":
+        payload = {
+            "carplate": carplate_num,
+            "type": car_type,
+            "action": "entered",
+            "time_entered": get_iso_utc_now(),
+        }
+    elif action == "left":
+        payload = {
+            "carplate": carplate_num,
+            "action": "left",
+            "time_left": get_iso_utc_now(),
+        }
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+    print("[DEBUG] Payload being sent:")
+    print(payload)
 
     response = requests.post(API_URL, json=payload, timeout=10)
+
+    print("[DEBUG] API status:", response.status_code)
+    print("[DEBUG] API raw response:", response.text)
+
     response.raise_for_status()
 
     try:
         return response.json()
     except Exception:
         return {"status_code": response.status_code, "text": response.text}
-
 
 def main():
     ensure_dir(CAPTURES_DIR)
@@ -219,9 +241,11 @@ def main():
     # Just print the Nicla URL we will call
     # =====================================================
     nicla_capture_url = get_nicla_capture_url()
+    camera_role = get_camera_role()
 
     print("[*] Wireless capture pipeline ready.")
-    print(f"[*] Nicla capture URL: {NICLA_CAPTURE_URL}")
+    print(f"[*] Nicla capture URL: {nicla_capture_url}")
+    print(f"[*] Camera role: {camera_role}")
     print("Type 'c' to capture, 'q' to quit.")
 
     while True:
@@ -256,12 +280,23 @@ def main():
                 )
                 continue
 
-            car_type = check_car_type(carplate_num, ev_carplates)
-            print(f"[*] Car type determined: {car_type}")
+            if camera_role == "entered":
+                car_type = check_car_type(carplate_num, ev_carplates)
+                print(f"[*] Car type determined: {car_type}")
 
-            print("[*] Sending result to API...")
-            api_response = send_to_api(carplate_num, car_type)
+                print("[*] Sending result to API...")
+                api_response = send_to_api(
+                    carplate_num=carplate_num,
+                    action="entered",
+                    car_type=car_type,
+                )
 
+            elif camera_role == "left":
+                print("[*] Sending result to API...")
+                api_response = send_to_api(
+                    carplate_num=carplate_num,
+                    action="left",
+                )
             print("[+] API POST successful.")
             print("API response:", api_response)
 
