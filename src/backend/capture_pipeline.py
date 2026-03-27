@@ -4,6 +4,8 @@ import time
 import requests
 import csv
 import re
+from PIL import Image
+import io
 
 from ocr_engine import OcrEngine
 
@@ -29,9 +31,41 @@ RETRY_INTERVAL_SECONDS = 3
 EV_CARPLATES_CSV = ROOT / "ev_carplates.csv"
 DEFAULT_CAR_TYPE = "ICE"
 
+def validate_nicla(nicla_ip: str, timeout: int = 5) -> tuple[bool, str]:
+    health_url = f"http://{nicla_ip}:{NICLA_PORT}/health"
+    capture_url = f"http://{nicla_ip}:{NICLA_PORT}/capture"
+
+    try:
+        print(f"[*] Checking Nicla health: {health_url}")
+        response = requests.get(health_url, timeout=timeout)
+        response.raise_for_status()
+
+        body = response.text.strip().lower()
+        if body != "ok":
+            return False, f"/health returned unexpected body: {response.text}"
+
+        return True, capture_url
+
+    except requests.RequestException as e:
+        return False, str(e)
+    
 def get_nicla_capture_url() -> str:
-    nicla_ip = input("Enter Nicla IP (shown in OpenMV boot log): ").strip()
-    return f"http://{nicla_ip}:{NICLA_PORT}/capture"
+    while True:
+        nicla_ip = input("Enter Nicla IP (shown in OpenMV boot log): ").strip()
+
+        if not nicla_ip:
+            print("[!] IP cannot be empty.")
+            continue
+
+        ok, result = validate_nicla(nicla_ip)
+
+        if ok:
+            print(f"[+] Nicla reachable at {nicla_ip}")
+            return result
+
+        print(f"[!] Could not connect to Nicla at {nicla_ip}")
+        print(f"[!] Reason: {result}")
+        print("[!] Please check WiFi/IP and try again.")
 
 def get_camera_role() -> str:
     while True:
@@ -90,6 +124,16 @@ def run_ocr(ocr_engine: OcrEngine, image_path: Path) -> dict:
 def get_iso_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def flip_image_bytes(image_bytes: bytes) -> bytes:
+    image = Image.open(io.BytesIO(image_bytes))
+
+    # rotate 180 degrees (most likely your case)
+    flipped = image.rotate(180, expand=True)
+
+    output = io.BytesIO()
+    flipped.save(output, format="JPEG")
+
+    return output.getvalue()
 
 # =========================================================
 # CHANGED FOR WIFI:
@@ -122,6 +166,7 @@ def capture_and_ocr_with_retries(ocr_engine: OcrEngine, nicla_capture_url: str) 
         print(f"\n--- Attempt {attempt}/{MAX_CAPTURE_ATTEMPTS} ---")
 
         image_bytes = request_capture_over_http(nicla_capture_url)
+        image_bytes = flip_image_bytes(image_bytes)
         archive_path, latest_path = save_image(image_bytes, attempt_no=attempt)
 
         print(f"Saved: {archive_path}")

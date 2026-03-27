@@ -12,7 +12,7 @@ PASSWORD = "12345678"
 PORT = 80
 
 JPEG_QUALITY = 85
-FRAME_SIZE = sensor.QVGA
+FRAME_SIZE = sensor.QQVGA #sensor.QVGA #This one better, but might crash disk
 
 # -----------------------------
 # BOOT LOG FILE
@@ -32,6 +32,20 @@ def log_file(msg):
         pass
 
 
+def send_text_response(client, status_line, body, content_type="text/plain"):
+    body_bytes = body.encode()
+    response = (
+        "{}\r\n"
+        "Content-Type: {}\r\n"
+        "Content-Length: {}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(status_line, content_type, len(body_bytes))
+
+    client.send(response.encode())
+    send_all(client, body_bytes)
+
+
 # -----------------------------
 # CAMERA INIT
 # -----------------------------
@@ -47,7 +61,7 @@ def init_camera():
     sensor.set_framesize(FRAME_SIZE)
     log_file("INIT_CAMERA: framesize ok")
 
-    sensor.skip_frames(time=2000)
+    sensor.skip_frames(time=500) #sensor.skip_frames(time=2000) #was 2000, but might cause OOM on disk, so reduced to 500. You can increase if you have more RAM or want better image quality at the cost of longer boot time.
     log_file("INIT_CAMERA: skip_frames ok")
 
     # auto gain unsupported on your sensor
@@ -144,7 +158,7 @@ def start_server():
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(addr)
-    server.listen(1)
+    server.listen(5)   # was 1
 
     print("Server listening on port", PORT)
     log_file("SERVER: listening on port {}".format(PORT))
@@ -158,6 +172,8 @@ def start_server():
             print("Client connected:", addr)
             log_file("SERVER: client connected {}".format(addr))
 
+            client.settimeout(3)   # very important
+
             request = client.recv(1024)
 
             if not request:
@@ -165,13 +181,17 @@ def start_server():
                 client.close()
                 continue
 
-            request_str = request.decode()
-            log_file("SERVER: request received")
+            request_str = request.decode("utf-8", "ignore")
+            request_line = request_str.split("\r\n", 1)[0]
 
-            if "GET /capture" in request_str:
-                print("Capture requested")
-                log_file("SERVER: capture requested")
+            print("Request:", request_line)
+            log_file("SERVER: request received {}".format(request_line))
 
+            if request_line.startswith("GET /health"):
+                send_text_response(client, "HTTP/1.1 200 OK", "ok")
+                log_file("SERVER: health response sent")
+
+            elif request_line.startswith("GET /capture"):
                 jpeg_bytes = capture_image()
 
                 header = (
@@ -184,13 +204,11 @@ def start_server():
 
                 client.send(header.encode())
                 send_all(client, jpeg_bytes)
-
                 log_file("SERVER: image sent")
 
             else:
-                msg = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
-                client.send(msg.encode())
-                log_file("SERVER: 404 sent")
+                send_text_response(client, "HTTP/1.1 404 Not Found", "not found")
+                log_file("SERVER: 404 sent for {}".format(request_line))
 
         except Exception as e:
             print("SERVER ERROR:", e)
@@ -220,6 +238,8 @@ def main():
         print("Camera server ready")
         print("Capture URL:")
         print("http://{}:{}/capture".format(ip, PORT))
+        print("Health URL:")
+        print("http://{}:{}/health".format(ip, PORT))
 
         log_file("BOOT: server starting")
         start_server()
