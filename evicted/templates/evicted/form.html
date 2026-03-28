@@ -13,7 +13,7 @@
     <label for="time_parked">Time parked *</label>
     <input type="datetime-local" id="time_parked" name="time_parked" readonly placeholder="Set by staff">
     <label for="phone">Phone number *</label>
-    <input type="tel" id="phone" name="phone" required placeholder="e.g. +65 9123 4567">
+    <input type="tel" id="phone" name="phone" required placeholder="e.g. 9123 4567" value="+65">
     <label for="lot_display">Lot number</label>
     {% if lot_number %}
     <input type="text" id="lot_display" value="{{ lot_number }}" readonly class="readonly-lot" aria-readonly="true">
@@ -64,17 +64,25 @@
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
         const d = new Date(iso);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        const h = String(d.getHours()).padStart(2, "0");
-        const min = String(d.getMinutes()).padStart(2, "0");
-        timeParkedInput.value = y + "-" + m + "-" + day + "T" + h + ":" + min;
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Singapore",
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", hour12: false
+        }).formatToParts(d);
+        const get = function(type) { return parts.find(function(p) { return p.type === type; }).value; };
+        timeParkedInput.value = get("year") + "-" + get("month") + "-" + get("day") + "T" + get("hour") + ":" + get("minute");
     }
 
     var triggeredAtFromUrl = urlParams.get("triggered_at");
     if (triggeredAtFromUrl) {
         setTimeParked(triggeredAtFromUrl);
+    }
+
+    function normalizeSgPhone(raw) {
+        var digits = raw.replace(/[\s\-().]/g, "");
+        if (digits.startsWith("+65")) return digits;
+        if (digits.startsWith("65")) return "+" + digits;
+        return "+65" + digits;
     }
 
     if (form) {
@@ -83,6 +91,8 @@
             formStatus.textContent = "Submitting…";
             const fd = new FormData(form);
             if (lotDisplay && lotDisplay.value) fd.set("lot_number", lotDisplay.value);
+            var phoneEl = document.getElementById("phone");
+            if (phoneEl && phoneEl.value) fd.set("phone", normalizeSgPhone(phoneEl.value));
             fetch("{% url 'evicted:submit_form' %}", { method: "POST", body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
