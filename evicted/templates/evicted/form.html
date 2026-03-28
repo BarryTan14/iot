@@ -64,13 +64,15 @@
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
         const d = new Date(iso);
-        const parts = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "Asia/Singapore",
-            year: "numeric", month: "2-digit", day: "2-digit",
-            hour: "2-digit", minute: "2-digit", hour12: false
-        }).formatToParts(d);
-        const get = function(type) { return parts.find(function(p) { return p.type === type; }).value; };
-        timeParkedInput.value = get("year") + "-" + get("month") + "-" + get("day") + "T" + get("hour") + ":" + get("minute");
+        if (isNaN(d.getTime())) return;
+        // Convert UTC to SGT (UTC+8) using arithmetic to avoid Intl/browser quirks
+        const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+        const y = sgt.getUTCFullYear();
+        const mo = String(sgt.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(sgt.getUTCDate()).padStart(2, "0");
+        const h = String(sgt.getUTCHours()).padStart(2, "0");
+        const min = String(sgt.getUTCMinutes()).padStart(2, "0");
+        timeParkedInput.value = y + "-" + mo + "-" + day + "T" + h + ":" + min;
     }
 
     var triggeredAtFromUrl = urlParams.get("triggered_at");
