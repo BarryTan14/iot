@@ -684,12 +684,6 @@ def submit_form(request):
             phone=phone,
             lot_number=lot_number,
         )
-        # Link to Cars table: EV lot form implies EV type, time_entered = time_parked
-        Car.objects.create(
-            carplate=carplate,
-            type="EV",
-            time_entered=time_parked,
-        )
         msg = f"Form submitted for lot {lot_number}."
         publish_trigger_event(
             "form_submitted",
