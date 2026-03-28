@@ -63,16 +63,9 @@
 
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return;
-        // Convert UTC to SGT (UTC+8) using arithmetic to avoid Intl/browser quirks
-        const sgt = new Date(d.getTime() + 8 * 60 * 60 * 1000);
-        const y = sgt.getUTCFullYear();
-        const mo = String(sgt.getUTCMonth() + 1).padStart(2, "0");
-        const day = String(sgt.getUTCDate()).padStart(2, "0");
-        const h = String(sgt.getUTCHours()).padStart(2, "0");
-        const min = String(sgt.getUTCMinutes()).padStart(2, "0");
-        timeParkedInput.value = y + "-" + mo + "-" + day + "T" + h + ":" + min;
+        // Server sends SGT time in ISO format (e.g. "2026-03-28T15:23:05+08:00")
+        // datetime-local input needs "YYYY-MM-DDTHH:MM" — just take first 16 chars
+        timeParkedInput.value = iso.substring(0, 16);
     }
 
     var triggeredAtFromUrl = urlParams.get("triggered_at");
