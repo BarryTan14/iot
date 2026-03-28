@@ -182,6 +182,6 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
 MQTT_ALERT_PHONE = os.environ.get("MQTT_ALERT_PHONE", "")
 
 # QR live page: countdown duration in seconds before "no submission" is reported (single source of truth)
-QR_LIVE_WARNING_SECONDS = int(os.environ.get("QR_LIVE_WARNING_SECONDS", "10"))
+QR_LIVE_WARNING_SECONDS = int(os.environ.get("QR_LIVE_WARNING_SECONDS", "30"))
 
 # Carpark capacity: ICE vehicles are allowed in EV lots when at least one lot is free
