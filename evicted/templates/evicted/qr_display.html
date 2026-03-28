@@ -1,0 +1,49 @@
+{% extends "evicted/base.html" %}
+{% load static %}
+{% block title %}QR codes – Parking form{% endblock %}
+{% block content %}
+<section class="card" id="qr-section">
+    <h2>Parking form – scan to open</h2>
+    <p>Each QR code opens the form for a specific lot.</p>
+    <div class="qr-grid">
+        <div class="qr-item">
+            <span class="qr-label">Lot 1</span>
+            <div id="qrcode-1" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 2</span>
+            <div id="qrcode-2" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 3</span>
+            <div id="qrcode-3" class="qrcode-container"></div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<script>
+(function() {
+    const lotUrls = {{ lot_urls_json|safe }};
+    const lots = [1, 2, 3];
+
+    function drawQr(containerId, lotNum) {
+        var container = document.getElementById(containerId);
+        if (!container || !lotUrls[String(lotNum)]) return;
+        container.innerHTML = "";
+        var canvas = document.createElement("canvas");
+        QRCode.toCanvas(canvas, lotUrls[String(lotNum)], { width: 160 }, function(err) {
+            if (err) { container.textContent = "QR error"; return; }
+            container.appendChild(canvas);
+        });
+    }
+
+    if (typeof QRCode !== "undefined") {
+        lots.forEach(function(lot, i) {
+            drawQr("qrcode-" + (i + 1), lot);
+        });
+    }
+})();
+</script>
+{% endblock %}

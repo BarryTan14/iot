@@ -1,0 +1,204 @@
+{% extends "evicted/base.html" %}
+{% load static %}
+{% block title %}Lot {{ lot_number }} – Parking{% endblock %}
+{% block extra_head %}
+<meta name="csrf-token" content="{{ csrf_token }}">
+<style>
+    body { background: #f3f4f6; }
+    .kiosk-card {
+        border-radius: 12px;
+        background: #fff;
+        padding: 2rem 1.5rem 1.5rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        border: 4px solid transparent;
+    }
+    .kiosk-card.ice-allowed { border-color: #7c3aed; }
+    .kiosk-card.ev-only     { border-color: #16a34a; }
+    .kiosk-card.lot-taken   { border-color: #dc2626; }
+
+    .lot-title {
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin: 0 0 0.4rem;
+        color: #111827;
+    }
+    .lot-status {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin: 0 0 1.25rem;
+    }
+    .kiosk-card.ice-allowed .lot-status { color: #7c3aed; }
+    .kiosk-card.ev-only     .lot-status { color: #16a34a; }
+    .kiosk-card.lot-taken   .lot-status { color: #dc2626; }
+
+    .lot-occupancy {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 1.25rem;
+    }
+
+    #qr-live-timer { color: #6b7280; margin-top: 0.75rem; }
+</style>
+{% endblock %}
+{% block content %}
+<div id="kiosk-card" class="kiosk-card {% if lot_occupied %}lot-taken{% elif carpark.ice_allowed %}ice-allowed{% else %}ev-only{% endif %}">
+    <h1 class="lot-title">{% if lot_number %}Lot {{ lot_number }}{% else %}Parking{% endif %}</h1>
+    <p id="lot-status" class="lot-status">
+        {% if lot_occupied %}✗ Lot is taken{% elif carpark.ice_allowed %}✓ ICE vehicles may park here{% else %}✓ EV vehicles only{% endif %}
+    </p>
+    <p id="lot-occupancy" class="lot-occupancy">{{ carpark.occupied_lots }} / {{ carpark.total_lots }} lots occupied</p>
+
+    <p id="qr-live-timer" style="display: none;">Submit form within: <strong id="qr-live-timer-value">{{ timer_initial }}</strong></p>
+    <div id="qr-live-codes" class="qr-grid" style="display: none;">
+        {% for lot in lot_numbers %}
+        <div class="qr-item" data-lot="{{ lot }}">
+            <span class="qr-label">Lot {{ lot }}</span>
+            <div id="qrcode-{{ lot }}" class="qrcode-container"></div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+{{ qr_live_config|json_script:"qr-live-config" }}
+<script>
+(function() {
+    var raw = document.getElementById("qr-live-config");
+    var CONFIG = raw ? JSON.parse(raw.textContent) : {};
+    var API_ALERT_NO_SUBMISSION = CONFIG.api_alert_no_submission || "";
+    var WARNING_MS = (CONFIG.warning_seconds != null ? CONFIG.warning_seconds : 10) * 1000;
+    var LOT_NUMBERS = CONFIG.lot_numbers || [1, 2, 3];
+    var PAGE_LOT = CONFIG.page_lot;
+    var WS_URL = CONFIG.ws_url || "";
+
+    var cardEl        = document.getElementById("kiosk-card");
+    var statusEl      = document.getElementById("lot-status");
+    var occupancyEl   = document.getElementById("lot-occupancy");
+    var codesEl       = document.getElementById("qr-live-codes");
+    var timerEl       = document.getElementById("qr-live-timer");
+    var timerValueEl  = document.getElementById("qr-live-timer-value");
+    var noSubmitWarningTimer = null;
+    var countdownInterval = null;
+    var currentTriggeredAt = null;
+
+    function drawQr(containerId, url) {
+        var container = document.getElementById(containerId);
+        if (!container || !url) return;
+        container.innerHTML = "";
+        var canvas = document.createElement("canvas");
+        QRCode.toCanvas(canvas, url, { width: 160 }, function(err) {
+            if (err) { container.textContent = "QR error"; return; }
+            container.appendChild(canvas);
+        });
+    }
+
+    function formatCountdown(ms) {
+        if (ms <= 0) return "0:00";
+        var s = Math.ceil(ms / 1000);
+        var m = Math.floor(s / 60);
+        s = s % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    function onTimerExpired() {
+        if (PAGE_LOT !== null && currentTriggeredAt) {
+            var csrf = document.querySelector('meta[name="csrf-token"]');
+            var token = csrf ? csrf.getAttribute('content') : '';
+            fetch(API_ALERT_NO_SUBMISSION, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": token || "" },
+                body: JSON.stringify({ triggered_at: currentTriggeredAt, lot_number: PAGE_LOT }),
+            }).catch(function() {});
+        }
+    }
+
+    function startCountdown(endAt) {
+        if (countdownInterval) clearInterval(countdownInterval);
+        if (!timerEl || !timerValueEl) return;
+        timerEl.style.display = "";
+        function tick() {
+            var left = endAt - Date.now();
+            if (left <= 0) {
+                timerValueEl.textContent = "0:00";
+                if (countdownInterval) clearInterval(countdownInterval);
+                countdownInterval = null;
+                return;
+            }
+            timerValueEl.textContent = formatCountdown(left);
+        }
+        tick();
+        countdownInterval = setInterval(tick, 1000);
+    }
+
+    function stopCountdown() {
+        if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+        if (timerEl) timerEl.style.display = "none";
+        if (timerValueEl) timerValueEl.textContent = CONFIG.timer_initial || "0:10";
+    }
+
+    function showQrCodes(lotUrls, triggeredAt) {
+        if (typeof QRCode === "undefined" || !lotUrls) return;
+        var wasHidden = codesEl.style.display === "none";
+        if (triggeredAt) currentTriggeredAt = triggeredAt;
+        codesEl.style.display = "";
+        LOT_NUMBERS.forEach(function(lot) { drawQr("qrcode-" + lot, lotUrls[String(lot)]); });
+        if (wasHidden) {
+            if (noSubmitWarningTimer) clearTimeout(noSubmitWarningTimer);
+            startCountdown(Date.now() + WARNING_MS);
+            noSubmitWarningTimer = setTimeout(function() {
+                noSubmitWarningTimer = null;
+                stopCountdown();
+                if (codesEl.style.display !== "none") onTimerExpired();
+            }, WARNING_MS);
+        }
+    }
+
+    function hideQrCodes() {
+        currentTriggeredAt = null;
+        if (noSubmitWarningTimer) { clearTimeout(noSubmitWarningTimer); noSubmitWarningTimer = null; }
+        stopCountdown();
+        codesEl.style.display = "none";
+        LOT_NUMBERS.forEach(function(lot) {
+            var c = document.getElementById("qrcode-" + lot);
+            if (c) c.innerHTML = "";
+        });
+    }
+
+    function shouldShowForThisPage(triggeredLot) {
+        if (PAGE_LOT === null) return triggeredLot === null;
+        return triggeredLot === PAGE_LOT;
+    }
+
+    function updateCapacity(data) {
+        var lotOccupied = data.lots_occupied && PAGE_LOT !== null ? !!data.lots_occupied[String(PAGE_LOT)] : false;
+        var iceAllowed = data.ice_allowed;
+        var stateClass = lotOccupied ? "lot-taken" : (iceAllowed ? "ice-allowed" : "ev-only");
+        var statusText = lotOccupied ? "✗ Lot is taken" : (iceAllowed ? "✓ ICE vehicles may park here" : "✓ EV vehicles only");
+        if (cardEl)      cardEl.className = "kiosk-card " + stateClass;
+        if (statusEl)    statusEl.textContent = statusText;
+        if (occupancyEl) occupancyEl.textContent = data.occupied_lots + " / " + data.total_lots + " lots occupied";
+    }
+
+    function connectWs() {
+        if (!WS_URL) return;
+        var ws = new WebSocket(WS_URL);
+        ws.onopen = function() { console.log("[QR live] WebSocket connected"); };
+        ws.onmessage = function(ev) {
+            try {
+                var data = JSON.parse(ev.data);
+                if (data.type === "capacity_update") { updateCapacity(data); return; }
+                if (data.show_qr === false) { hideQrCodes(); return; }
+                if (data.show_qr && data.lot_urls && shouldShowForThisPage(data.triggered_lot)) {
+                    showQrCodes(data.lot_urls, data.triggered_at);
+                }
+            } catch (e) { console.log("[QR live] parse error", e); }
+        };
+        ws.onclose = function() { setTimeout(connectWs, 3000); };
+        ws.onerror = function() { ws.close(); };
+    }
+
+    connectWs();
+})();
+</script>
+{% endblock %}

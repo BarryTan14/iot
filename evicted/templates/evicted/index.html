@@ -1,0 +1,146 @@
+{% extends "evicted/base.html" %}
+{% load static %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Parking – Staff</h1>
+<nav class="card" style="margin-bottom: 1rem;">
+    <p style="margin-bottom: 0.5rem;"><a href="{% url 'evicted:dashboard' %}" class="btn btn-secondary">Dashboard (parked & gantry)</a></p>
+    <h2 style="margin-top: 0;">Live display</h2>
+    <p class="muted" style="margin-bottom: 0.5rem;">Open the live QR page for a kiosk or screen.</p>
+    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=1 %}" class="btn btn-secondary">Live – Lot 1</a></li>
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=2 %}" class="btn btn-secondary">Live – Lot 2</a></li>
+        <li><a href="{% url 'evicted:qr_live_lot' lot_number=3 %}" class="btn btn-secondary">Live – Lot 3</a></li>
+    </ul>
+</nav>
+<section class=”card” id=”qr-section”>
+    <h2>QR codes for form</h2>
+    <p>Users scan to open the parking form. Each QR links to a specific lot.</p>
+    <div class="qr-grid">
+        <div class="qr-item">
+            <span class="qr-label">Lot 1</span>
+            <div id="qrcode-1" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 2</span>
+            <div id="qrcode-2" class="qrcode-container"></div>
+        </div>
+        <div class="qr-item">
+            <span class="qr-label">Lot 3</span>
+            <div id="qrcode-3" class="qrcode-container"></div>
+        </div>
+    </div>
+</section>
+<section class="card">
+    <h2>3. Parking lots</h2>
+    {% if parking_lots %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Lot number</th>
+                    <th>Occupied</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in parking_lots %}
+                <tr>
+                    <td>{{ p.lot_number }}</td>
+                    <td>{% if p.occupied %}Yes{% else %}No{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No parking lot records yet.</p>
+    {% endif %}
+</section>
+<section class="card">
+    <h2>4. EV Lots</h2>
+    {% if ev_lots %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Car plate</th>
+                    <th>Name</th>
+                    <th>Lot</th>
+                    <th>Time parked</th>
+                    <th>Time left</th>
+                    <th>Phone</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in ev_lots %}
+                <tr>
+                    <td>{{ s.carplate }}</td>
+                    <td>{{ s.name }}</td>
+                    <td>{{ s.lot_number }}</td>
+                    <td>{{ s.time_parked|date:"M d, H:i" }}</td>
+                    <td>{% if s.time_left %}{{ s.time_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
+                    <td>{{ s.phone }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No EV lot records yet.</p>
+    {% endif %}
+</section>
+<section class="card">
+    <h2>5. Cars</h2>
+    {% if cars %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Car plate</th>
+                    <th>Type</th>
+                    <th>Time entered</th>
+                    <th>Time left</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cars %}
+                <tr>
+                    <td>{{ c.carplate }}</td>
+                    <td>{{ c.type }}</td>
+                    <td>{{ c.time_entered|date:"M d, H:i" }}</td>
+                    <td>{% if c.time_left %}{{ c.time_left|date:"M d, H:i" }}{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="muted">No car records yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<script>
+(function() {
+    const formUrlBase = "{{ form_url|escapejs }}";
+    const lots = [1, 2, 3];
+
+    function drawQr(containerId, lotNum) {
+        var container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = "";
+        var url = formUrlBase + (formUrlBase.indexOf("?") >= 0 ? "&" : "?") + "lot=" + lotNum;
+        var canvas = document.createElement("canvas");
+        QRCode.toCanvas(canvas, url, { width: 160 }, function(err) {
+            if (err) { container.textContent = "QR error"; return; }
+            container.appendChild(canvas);
+        });
+    }
+
+    if (typeof QRCode !== "undefined") {
+        lots.forEach(function(lot, i) { drawQr("qrcode-" + (i + 1), lot); });
+    }
+})();
+</script>
+{% endblock %}

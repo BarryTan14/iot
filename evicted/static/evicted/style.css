@@ -1,0 +1,136 @@
+* {
+    box-sizing: border-box;
+}
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #1a1a1a;
+}
+.container {
+    max-width: 480px;
+    margin: 0 auto;
+}
+h1 {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+}
+h2 {
+    font-size: 1.1rem;
+    margin: 0 0 0.5rem 0;
+}
+.card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+.form-grid label {
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+.form-grid input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+.form-grid input:read-only {
+    background: #f0f0f0;
+    color: #555;
+}
+.form-actions {
+    grid-column: 1;
+    margin-top: 0.5rem;
+}
+.btn {
+    display: inline-block;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    text-decoration: none;
+}
+.btn-primary {
+    background: #2563eb;
+    color: #fff;
+}
+.btn-primary:hover {
+    background: #1d4ed8;
+}
+.btn-secondary {
+    background: #e5e7eb;
+    color: #374151;
+}
+.btn-secondary:hover {
+    background: #d1d5db;
+}
+.muted {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-top: 0.5rem;
+}
+.qrcode-container {
+    margin-top: 1rem;
+    padding: 0.5rem;
+    background: #fff;
+    display: inline-block;
+    border-radius: 6px;
+}
+.qrcode-container canvas {
+    display: block;
+}
+.qr-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+.qr-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.qr-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+.success-card {
+    text-align: center;
+    padding: 2rem;
+}
+.success-card .btn {
+    margin-top: 1rem;
+}
+.table-wrap {
+    overflow-x: auto;
+    margin-top: 0.5rem;
+}
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.data-table th,
+.data-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+}
+.data-table th {
+    font-weight: 600;
+    color: #374151;
+    background: #f9fafb;
+}
+.data-table tbody tr:hover {
+    background: #f9fafb;
+}
