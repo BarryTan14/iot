@@ -1,0 +1,398 @@
+{% extends "evicted/base.html" %}
+{% load static %}
+{% block title %}Dashboard{% endblock %}
+{% block extra_head %}
+<style>
+    .dashboard-page .container { max-width: 960px; }
+    .dashboard-page h1 { margin-bottom: 0.25rem; }
+    .dashboard-page .nav-links { margin-bottom: 1.5rem; }
+    .dashboard-page .nav-links a { margin-right: 0.75rem; }
+
+    /* Stats bar */
+    .stats-bar {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+    }
+    .stat-chip {
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    .stat-chip.occupied  { background: #fee2e2; color: #991b1b; }
+    .stat-chip.free      { background: #d1fae5; color: #065f46; }
+    .stat-chip.ice-alert { background: #fef3c7; color: #92400e; }
+    .stat-chip.total     { background: #e5e7eb; color: #374151; }
+
+    /* Carpark */
+    .carpark-section { margin-bottom: 2rem; }
+    .carpark-section h2 { margin-bottom: 1rem; font-size: 1rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .carpark-road {
+        background: #d1d5db;
+        border-radius: 12px;
+        padding: 1.5rem 1.25rem 1rem;
+        position: relative;
+    }
+    /* Dashed centre line */
+    .carpark-road::before {
+        content: "";
+        position: absolute;
+        bottom: 0; left: 50%; transform: translateX(-50%);
+        width: 4px; height: 0.75rem;
+        background: #9ca3af;
+        border-radius: 2px;
+    }
+
+    .bays-row {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+    }
+
+    .bay {
+        flex: 1;
+        max-width: 260px;
+        border-radius: 8px;
+        padding: 1rem;
+        border: 3px solid transparent;
+        transition: box-shadow 0.15s;
+        position: relative;
+        min-height: 160px;
+    }
+    .bay:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+
+    .bay--free {
+        background: #f0fdf4;
+        border-color: #86efac;
+    }
+    .bay--occupied.bay--ev {
+        background: #eff6ff;
+        border-color: #93c5fd;
+    }
+    .bay--occupied.bay--ice {
+        background: #fff7ed;
+        border-color: #fdba74;
+    }
+
+    .bay-lot-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #9ca3af;
+        margin-bottom: 0.35rem;
+    }
+
+    .bay-status-icon {
+        font-size: 2rem;
+        line-height: 1;
+        margin-bottom: 0.5rem;
+        display: block;
+    }
+
+    .bay-free-label {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #16a34a;
+    }
+
+    .bay-plate {
+        font-size: 1.25rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        color: #1e293b;
+        font-family: monospace;
+        margin-bottom: 0.2rem;
+    }
+    .bay-name {
+        font-size: 0.9rem;
+        color: #475569;
+        margin-bottom: 0.4rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .bay-time {
+        font-size: 0.78rem;
+        color: #6b7280;
+        margin-top: 0.4rem;
+    }
+
+    .type-badge {
+        font-size: 0.72rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        font-weight: 700;
+        display: inline-block;
+    }
+    .type-ev  { background: #dbeafe; color: #1d4ed8; }
+    .type-ice { background: #ffedd5; color: #c2410c; }
+
+    /* Striped floor pattern for free bay */
+    .bay--free::after {
+        content: "";
+        position: absolute;
+        bottom: 8px; left: 50%; transform: translateX(-50%);
+        width: 40%;
+        height: 3px;
+        background: repeating-linear-gradient(90deg, #bbf7d0 0 8px, transparent 8px 14px);
+        border-radius: 2px;
+    }
+
+    /* Gantry entries */
+    .gantry-section .card h2 {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .gantry-section .card h2 .badge {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        background: #e5e7eb;
+        color: #374151;
+    }
+    .gantry-section .empty-msg { color: #6b7280; font-style: italic; padding: 1rem 0; }
+
+    @media (max-width: 600px) {
+        .bays-row { flex-direction: column; align-items: center; }
+        .bay { max-width: 100%; width: 100%; }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="dashboard-page">
+    <h1>Parking dashboard</h1>
+    <nav class="nav-links">
+        <a href="{% url 'evicted:index' %}" class="btn btn-secondary">← Staff home</a>
+        <a href="{% url 'evicted:qr_live_lot' lot_number=1 %}" class="btn btn-secondary">Live QR – Lot 1</a>
+        <a href="{% url 'evicted:qr_live_lot' lot_number=2 %}" class="btn btn-secondary">Live QR – Lot 2</a>
+        <a href="{% url 'evicted:qr_live_lot' lot_number=3 %}" class="btn btn-secondary">Live QR – Lot 3</a>
+    </nav>
+
+    <!-- Stats bar -->
+    <div class="stats-bar">
+        <span class="stat-chip total">{{ total_lots }} lots total</span>
+        <span class="stat-chip occupied">{{ occupied_count }} occupied</span>
+        <span class="stat-chip free">{{ free_count }} free</span>
+        {% if ice_in_ev_count > 0 %}
+        <span class="stat-chip ice-alert">⚠ {{ ice_in_ev_count }} ICE in EV lot{{ ice_in_ev_count|pluralize }}</span>
+        {% endif %}
+    </div>
+
+    <!-- Carpark visual -->
+    <section class="carpark-section">
+        <h2>EV charging bays</h2>
+        <div class="carpark-road">
+            <div class="bays-row">
+                {% for item in enriched_lots %}
+                <div class="bay bay--{% if item.lot.occupied %}occupied bay--{{ item.car_type|lower }}{% else %}free{% endif %}">
+                    <div class="bay-lot-label">Lot {{ item.lot.lot_number }}</div>
+                    {% if item.occupant %}
+                        <span class="bay-status-icon">🚗</span>
+                        <div class="bay-plate">{{ item.occupant.carplate }}</div>
+                        <div class="bay-name">{{ item.occupant.name }}</div>
+                        <span class="type-badge type-{{ item.car_type|lower }}">{{ item.car_type }}</span>
+                        <div class="bay-time">Since {{ item.occupant.time_parked|date:"M d, H:i" }}</div>
+                    {% else %}
+                        <span class="bay-status-icon">⚡</span>
+                        <div class="bay-free-label">Available</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <!-- Timeline chart -->
+    <section class="card" style="margin-bottom: 1.5rem;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.25rem;">
+            <h2 style="margin: 0;">Gantry entries — {{ chart_date }}</h2>
+            <div style="display: flex; gap: 1.5rem;">
+                <span style="font-size: 0.85rem; color: #6b7280;"><strong style="color: #111827;">{{ total_today }}</strong> cars today</span>
+                <span style="font-size: 0.85rem; color: #6b7280;">Avg stay: <strong style="color: #111827;">{{ avg_duration_str }}</strong></span>
+            </div>
+        </div>
+        <p class="muted" style="margin-bottom: 1rem;">Cars entering per hour (local time).</p>
+        <div style="position: relative; height: 220px;">
+            <canvas id="gantry-chart"></canvas>
+        </div>
+    </section>
+
+    <!-- Analytics stat row -->
+    <section class="card" style="margin-bottom: 1.5rem;">
+        <h2 style="margin-bottom: 1rem;">Analytics</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem;">
+            <div style="background:#f9fafb;border-radius:8px;padding:0.85rem 1rem;">
+                <div style="font-size:0.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Avg dwell</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#111827;">{{ dwell_avg }}</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:0.85rem 1rem;">
+                <div style="font-size:0.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Median dwell</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#111827;">{{ dwell_median }}</div>
+            </div>
+            <div style="background:#fff7ed;border-radius:8px;padding:0.85rem 1rem;border:1px solid #fed7aa;">
+                <div style="font-size:0.75rem;color:#9a3412;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Overstays &gt;4h</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#9a3412;">{{ overstay_count }}</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:0.85rem 1rem;">
+                <div style="font-size:0.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem;">Full capacity today</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#111827;">{{ ice_pressure_mins }}<span style="font-size:0.9rem;font-weight:400;color:#6b7280;"> min</span></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Per-lot utilisation -->
+    <section class="card" style="margin-bottom: 1.5rem;">
+        <h2 style="margin-bottom: 1rem;">Lot utilisation — today</h2>
+        {% for lot_num, pct in lot_utilisation.items %}
+        <div style="margin-bottom: 0.85rem;">
+            <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem;">
+                <span style="font-weight:600;">Lot {{ lot_num }}</span>
+                <span style="color:#6b7280;">{{ pct }}%</span>
+            </div>
+            <div style="background:#e5e7eb;border-radius:999px;height:10px;overflow:hidden;">
+                <div style="height:100%;border-radius:999px;background:{% if pct >= 80 %}#dc2626{% elif pct >= 50 %}#f59e0b{% else %}#3b82f6{% endif %};width:{{ pct }}%;transition:width .3s;"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+
+    <!-- EV vs ICE chart -->
+    <section class="card" style="margin-bottom: 1.5rem;">
+        <h2 style="margin-bottom: 0.25rem;">EV vs ICE entries — {{ chart_date }}</h2>
+        <p class="muted" style="margin-bottom: 1rem;">Cars entering per hour, split by type.</p>
+        <div style="position: relative; height: 220px;">
+            <canvas id="ev-ice-chart"></canvas>
+        </div>
+    </section>
+
+    <!-- Gantry entries -->
+    <section class="gantry-section">
+        <div class="card">
+            <h2>Gantry entries <span class="badge">{{ gantry_entries|length }}</span></h2>
+            <p class="muted">Most recent cars that passed through the gantry.</p>
+            {% if gantry_entries %}
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Car plate</th>
+                            <th>Type</th>
+                            <th>Time entered</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in gantry_entries %}
+                        <tr>
+                            <td>{{ c.carplate }}</td>
+                            <td><span class="type-badge type-{{ c.type|lower }}">{{ c.type }}</span></td>
+                            <td>{{ c.time_entered|date:"M d, H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="empty-msg">No gantry entries yet.</p>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    var counts = {{ hourly_counts_json }};
+    var labels = [];
+    for (var i = 0; i < 24; i++) {
+        labels.push(i === 0 ? "12am" : i < 12 ? i + "am" : i === 12 ? "12pm" : (i - 12) + "pm");
+    }
+    var ctx = document.getElementById("gantry-chart");
+    if (!ctx) return;
+    new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Cars entered",
+                data: counts,
+                backgroundColor: "rgba(59, 130, 246, 0.6)",
+                borderColor: "rgba(59, 130, 246, 1)",
+                borderWidth: 1,
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(items) { return labels[items[0].dataIndex]; },
+                        label: function(item) { return item.raw + " car" + (item.raw !== 1 ? "s" : ""); }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false } },
+                y: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1, precision: 0 },
+                    grid: { color: "rgba(0,0,0,0.05)" }
+                }
+            }
+        }
+    });
+})();
+</script>
+<script>
+(function() {
+    var labels = [];
+    for (var i = 0; i < 24; i++) {
+        labels.push(i === 0 ? "12am" : i < 12 ? i + "am" : i === 12 ? "12pm" : (i - 12) + "pm");
+    }
+    var evData  = {{ hourly_ev_json }};
+    var iceData = {{ hourly_ice_json }};
+    var ctx = document.getElementById("ev-ice-chart");
+    if (!ctx) return;
+    new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [
+                { label: "EV",  data: evData,  backgroundColor: "rgba(59,130,246,0.7)", borderRadius: 3 },
+                { label: "ICE", data: iceData, backgroundColor: "rgba(249,115,22,0.7)", borderRadius: 3 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: "top" },
+                tooltip: {
+                    callbacks: {
+                        label: function(item) {
+                            return item.dataset.label + ": " + item.raw + " car" + (item.raw !== 1 ? "s" : "");
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { stacked: true, grid: { display: false } },
+                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1, precision: 0 }, grid: { color: "rgba(0,0,0,0.05)" } }
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}
