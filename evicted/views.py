@@ -325,7 +325,7 @@ def trigger_workflow(request):
             _send_qr_trigger_websocket(lot, {"show_qr": False})
             return JsonResponse({"ok": True, "message": "QR hidden.", "lot_number": lot})
         payload = _qr_display_payload(request)
-        triggered_at = timezone.now().isoformat()
+        triggered_at = timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         payload["lot_urls"] = _lot_urls_with_triggered_at(payload["lot_urls"], triggered_at)
         triggered_lot = int(lot) if lot and str(lot).strip().isdigit() and int(lot) in LOT_NUMBERS else None
         ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
@@ -365,9 +365,14 @@ def trigger_workflow(request):
     if timestamp_raw:
         from django.utils.dateparse import parse_datetime
         triggered_dt = parse_datetime(timestamp_raw)
-        triggered_at = triggered_dt.isoformat() if triggered_dt else timezone.now().isoformat()
+        if triggered_dt:
+            if timezone.is_naive(triggered_dt):
+                triggered_dt = timezone.make_aware(triggered_dt)
+            triggered_at = triggered_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            triggered_at = timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
-        triggered_at = timezone.now().isoformat()
+        triggered_at = timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ")
     payload["lot_urls"] = _lot_urls_with_triggered_at(payload["lot_urls"], triggered_at)
     triggered_lot = int(lot) if lot.strip().isdigit() and int(lot) in LOT_NUMBERS else None
     ws_payload = {"show_qr": True, "triggered_at": triggered_at, "triggered_lot": triggered_lot, **payload}
