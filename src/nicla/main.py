@@ -12,7 +12,7 @@ PASSWORD = "12345678"
 PORT = 80
 
 JPEG_QUALITY = 85
-FRAME_SIZE = sensor.QVGA
+FRAME_SIZE = sensor.QQVGA #sensor.QVGA #This one better, but might crash disk
 
 # -----------------------------
 # BOOT LOG FILE
@@ -32,6 +32,20 @@ def log_file(msg):
         pass
 
 
+def send_text_response(client, status_line, body, content_type="text/plain"):
+    body_bytes = body.encode()
+    response = (
+        "{}\r\n"
+        "Content-Type: {}\r\n"
+        "Content-Length: {}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(status_line, content_type, len(body_bytes))
+
+    client.send(response.encode())
+    send_all(client, body_bytes)
+
+
 # -----------------------------
 # CAMERA INIT
 # -----------------------------
@@ -47,7 +61,7 @@ def init_camera():
     sensor.set_framesize(FRAME_SIZE)
     log_file("INIT_CAMERA: framesize ok")
 
-    sensor.skip_frames(time=2000)
+    sensor.skip_frames(time=500) #sensor.skip_frames(time=2000) #was 2000, but might cause OOM on disk, so reduced to 500. You can increase if you have more RAM or want better image quality at the cost of longer boot time.
     log_file("INIT_CAMERA: skip_frames ok")
 
     # auto gain unsupported on your sensor
@@ -65,33 +79,44 @@ def connect_wifi():
     log_file("CONNECT_WIFI: start")
 
     wlan = network.WLAN(network.STA_IF)
+    wlan.active(False)
+    time.sleep(1)
+
     wlan.active(True)
+    time.sleep(1)
     log_file("CONNECT_WIFI: wlan active")
+
+    try:
+        wlan.disconnect()
+    except Exception:
+        pass
 
     wlan.connect(SSID, PASSWORD)
     log_file("CONNECT_WIFI: connect called")
 
     print("Connecting to WiFi...")
-    log_file("CONNECT_WIFI: waiting for connection")
 
     attempts = 0
-    while not wlan.isconnected():
-        attempts += 1
-        log_file("CONNECT_WIFI: waiting {}".format(attempts))
-        time.sleep(1)
+    while True:
+        status = wlan.status()
+        log_file("CONNECT_WIFI: attempt {} status={}".format(attempts + 1, status))
+        print("Waiting for WiFi... attempt", attempts + 1, "status=", status)
 
-        if attempts >= 20:
-            log_file("CONNECT_WIFI: timeout")
+        if wlan.isconnected():
+            ip = wlan.ifconfig()[0]
+            print("Connected!")
+            print("IP:", ip)
+            log_file("CONNECT_WIFI: connected ip={}".format(ip))
+            return ip
+
+        if status < 0:
+            raise Exception("WiFi connect failed, status={}".format(status))
+
+        attempts += 1
+        if attempts >= 30:
             raise Exception("WiFi connection timeout")
 
-    ip = wlan.ifconfig()[0]
-
-    print("Connected!")
-    print("IP:", ip)
-
-    log_file("CONNECT_WIFI: connected ip={}".format(ip))
-    return ip
-
+        time.sleep(1)
 
 # -----------------------------
 # CAPTURE IMAGE
@@ -133,7 +158,7 @@ def start_server():
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(addr)
-    server.listen(1)
+    server.listen(5)   # was 1
 
     print("Server listening on port", PORT)
     log_file("SERVER: listening on port {}".format(PORT))
@@ -147,6 +172,8 @@ def start_server():
             print("Client connected:", addr)
             log_file("SERVER: client connected {}".format(addr))
 
+            client.settimeout(3)   # very important
+
             request = client.recv(1024)
 
             if not request:
@@ -154,13 +181,17 @@ def start_server():
                 client.close()
                 continue
 
-            request_str = request.decode()
-            log_file("SERVER: request received")
+            request_str = request.decode("utf-8", "ignore")
+            request_line = request_str.split("\r\n", 1)[0]
 
-            if "GET /capture" in request_str:
-                print("Capture requested")
-                log_file("SERVER: capture requested")
+            print("Request:", request_line)
+            log_file("SERVER: request received {}".format(request_line))
 
+            if request_line.startswith("GET /health"):
+                send_text_response(client, "HTTP/1.1 200 OK", "ok")
+                log_file("SERVER: health response sent")
+
+            elif request_line.startswith("GET /capture"):
                 jpeg_bytes = capture_image()
 
                 header = (
@@ -173,13 +204,11 @@ def start_server():
 
                 client.send(header.encode())
                 send_all(client, jpeg_bytes)
-
                 log_file("SERVER: image sent")
 
             else:
-                msg = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
-                client.send(msg.encode())
-                log_file("SERVER: 404 sent")
+                send_text_response(client, "HTTP/1.1 404 Not Found", "not found")
+                log_file("SERVER: 404 sent for {}".format(request_line))
 
         except Exception as e:
             print("SERVER ERROR:", e)
@@ -200,15 +229,17 @@ def main():
     log_file("BOOT: main start")
 
     try:
-        init_camera()
-        log_file("BOOT: camera ok")
-
         ip = connect_wifi()
         log_file("BOOT: wifi ok ip={}".format(ip))
+
+        init_camera()
+        log_file("BOOT: camera ok")
 
         print("Camera server ready")
         print("Capture URL:")
         print("http://{}:{}/capture".format(ip, PORT))
+        print("Health URL:")
+        print("http://{}:{}/health".format(ip, PORT))
 
         log_file("BOOT: server starting")
         start_server()
