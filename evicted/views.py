@@ -368,7 +368,8 @@ def trigger_workflow(request):
         if triggered_dt:
             if timezone.is_naive(triggered_dt):
                 triggered_dt = timezone.make_aware(triggered_dt)
-            triggered_at = triggered_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            from datetime import timezone as dt_timezone
+            triggered_at = triggered_dt.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         else:
             triggered_at = timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
