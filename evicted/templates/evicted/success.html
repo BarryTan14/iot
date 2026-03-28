@@ -1,0 +1,10 @@
+{% extends "evicted/base.html" %}
+{% block title %}Success{% endblock %}
+{% block content %}
+<div class="card success-card">
+    <h1>Success</h1>
+    <p>Your parking details have been submitted.</p>
+    <p class="muted">Data saved to <strong>{{ database }}</strong>.</p>
+    <a href="{% url 'evicted:form' %}" class="btn btn-secondary">Submit another</a>
+</div>
+{% endblock %}
