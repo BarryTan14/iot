@@ -63,9 +63,14 @@
 
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
-        // Server sends SGT time in ISO format (e.g. "2026-03-28T15:23:05+08:00")
-        // datetime-local input needs "YYYY-MM-DDTHH:MM" — just take first 16 chars
-        timeParkedInput.value = iso.substring(0, 16);
+        var d = new Date(iso.slice(0, 19) + "Z");
+        if (isNaN(d.getTime())) return;
+        var t = new Date(d.getTime() - 8 * 60 * 60 * 1000);
+        timeParkedInput.value = t.getUTCFullYear() + "-" +
+            String(t.getUTCMonth() + 1).padStart(2, "0") + "-" +
+            String(t.getUTCDate()).padStart(2, "0") + "T" +
+            String(t.getUTCHours()).padStart(2, "0") + ":" +
+            String(t.getUTCMinutes()).padStart(2, "0");
     }
 
     var triggeredAtFromUrl = urlParams.get("triggered_at");
