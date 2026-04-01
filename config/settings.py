@@ -16,10 +16,10 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env from project root or evicted folder
+# Load .env from repo root (parent of evicted_kiosk/) or evicted_kiosk/ itself
 from dotenv import load_dotenv
+load_dotenv(BASE_DIR.parent / ".env")
 load_dotenv(BASE_DIR / ".env")
-load_dotenv(BASE_DIR / "evicted" / ".env")
 
 
 # Quick-start development settings - unsuitable for production

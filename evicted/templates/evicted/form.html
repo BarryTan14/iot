@@ -63,12 +63,13 @@
 
     function setTimeParked(iso) {
         if (!timeParkedInput || !iso) return;
-        const d = new Date(iso);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        const h = String(d.getHours()).padStart(2, "0");
-        const min = String(d.getMinutes()).padStart(2, "0");
+        // Force SGT (UTC+8) regardless of browser timezone
+        const sgt = new Date(new Date(iso).getTime() + 8 * 60 * 60 * 1000);
+        const y = sgt.getUTCFullYear();
+        const m = String(sgt.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(sgt.getUTCDate()).padStart(2, "0");
+        const h = String(sgt.getUTCHours()).padStart(2, "0");
+        const min = String(sgt.getUTCMinutes()).padStart(2, "0");
         timeParkedInput.value = y + "-" + m + "-" + day + "T" + h + ":" + min;
     }
 
