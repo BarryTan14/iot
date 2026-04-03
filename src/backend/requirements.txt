@@ -1,4 +1,0 @@
-requests
-paddleocr
-opencv-python
-pyserial
