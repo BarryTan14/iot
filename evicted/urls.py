@@ -20,4 +20,7 @@ urlpatterns = [
     path("api/cars/", views.create_car, name="create_car"),
     path("api/check-carplate/", views.check_carplate, name="check_carplate"),
     path("api/queue-sms/", views.queue_sms, name="queue_sms"),
+    path("api/lot-details/", views.lot_details_api, name="lot_details"),
+    path("api/analytics/", views.analytics_api, name="analytics"),
+    path("api/ev-sessions/", views.ev_sessions_api, name="ev_sessions"),
 ]

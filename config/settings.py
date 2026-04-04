@@ -50,6 +50,7 @@ ASGI_APPLICATION = "config.asgi.application"
 
 INSTALLED_APPS = [
     "daphne",
+    "corsheaders",
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -62,6 +63,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -185,3 +187,9 @@ MQTT_ALERT_PHONE = os.environ.get("MQTT_ALERT_PHONE", "")
 QR_LIVE_WARNING_SECONDS = int(os.environ.get("QR_LIVE_WARNING_SECONDS", "10"))
 
 # Carpark capacity: ICE vehicles are allowed in EV lots when at least one lot is free
+
+# CORS: allow the Next.js webapp to call our API endpoints
+# Comma-separated list of allowed origins, e.g. http://localhost:3000,https://myapp.vercel.app
+_cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+CORS_URLS_REGEX = r"^/api/.*$"

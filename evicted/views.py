@@ -890,3 +890,229 @@ def update_time_car_left(request):
     if not ok:
         return JsonResponse({**result, "ok": False}, status=status)
     return JsonResponse(result)
+
+
+@require_GET
+def lot_details_api(request):
+    """API: Per-lot occupant details for the live EV lot status cards."""
+    for n in LOT_NUMBERS:
+        ParkingLot.objects.get_or_create(lot_number=str(n), defaults={"occupied": False})
+    parking_lots = ParkingLot.objects.all().order_by("lot_number")
+
+    lots = []
+    ice_in_ev_count = 0
+    occupied_count = 0
+    for lot in parking_lots:
+        occupant = (
+            EVLot.objects.filter(lot_number=lot.lot_number, time_left__isnull=True)
+            .order_by("-created_at").first()
+        )
+        car_type = None
+        if occupant:
+            car = Car.objects.filter(carplate__iexact=occupant.carplate).order_by("-time_entered").first()
+            car_type = car.type if car else "EV"
+            occupied_count += 1
+            if car_type == "ICE":
+                ice_in_ev_count += 1
+
+        lots.append({
+            "lot_number": lot.lot_number,
+            "occupied": lot.occupied,
+            "carplate": occupant.carplate if occupant else None,
+            "name": occupant.name if occupant else None,
+            "phone": occupant.phone if occupant else None,
+            "car_type": car_type,
+            "time_parked": occupant.time_parked.isoformat() if occupant else None,
+        })
+
+    return JsonResponse({
+        "ok": True,
+        "lots": lots,
+        "occupied_count": occupied_count,
+        "free_count": len(lots) - occupied_count,
+        "ice_in_ev_count": ice_in_ev_count,
+    })
+
+
+@require_GET
+def analytics_api(request):
+    """API: Pre-computed EV lot analytics (dwell, utilisation, hourly counts, capacity pressure)."""
+    from datetime import timezone as dt_timezone
+    from django.db.models import ExpressionWrapper, F, DurationField, Q
+
+    def _fmt_secs(s):
+        h, r = divmod(int(s), 3600)
+        m = r // 60
+        return f"{h}h {m}m" if h else f"{m}m"
+
+    local_tz = timezone.get_current_timezone()
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(local_tz)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_local.astimezone(dt_timezone.utc)
+
+    # Hourly gantry chart + EV/ICE split
+    cars_today = list(Car.objects.filter(time_entered__gte=today_start_utc))
+    hourly_counts = [0] * 24
+    hourly_ev = [0] * 24
+    hourly_ice = [0] * 24
+    for c in cars_today:
+        h = c.time_entered.astimezone(local_tz).hour
+        hourly_counts[h] += 1
+        if c.type == "EV":
+            hourly_ev[h] += 1
+        else:
+            hourly_ice[h] += 1
+
+    # Dwell time distribution
+    completed = list(
+        Car.objects.filter(time_left__isnull=False)
+        .annotate(dur=ExpressionWrapper(F("time_left") - F("time_entered"), output_field=DurationField()))
+    )
+    dur_secs = sorted(c.dur.total_seconds() for c in completed if c.dur.total_seconds() >= 0)
+    if dur_secs:
+        n = len(dur_secs)
+        dwell_avg = _fmt_secs(sum(dur_secs) / n)
+        dwell_median = _fmt_secs(dur_secs[n // 2] if n % 2 else (dur_secs[n // 2 - 1] + dur_secs[n // 2]) / 2)
+        overstay_count = sum(1 for s in dur_secs if s > 4 * 3600)
+    else:
+        dwell_avg = dwell_median = "N/A"
+        overstay_count = 0
+
+    # Per-lot utilisation
+    elapsed_today_secs = (now_utc - today_start_utc).total_seconds()
+    lot_utilisation = {}
+    for lot_num in LOT_NUMBERS:
+        records = EVLot.objects.filter(
+            lot_number=str(lot_num),
+            time_parked__lt=now_utc,
+        ).filter(Q(time_left__isnull=True) | Q(time_left__gt=today_start_utc))
+        occ_secs = 0.0
+        for r in records:
+            start = max(r.time_parked, today_start_utc)
+            end = min(r.time_left if r.time_left else now_utc, now_utc)
+            if end > start:
+                occ_secs += (end - start).total_seconds()
+        lot_utilisation[str(lot_num)] = min(
+            round(occ_secs / elapsed_today_secs * 100, 1) if elapsed_today_secs > 0 else 0.0,
+            100.0,
+        )
+
+    # Full capacity pressure
+    evlots_today = list(EVLot.objects.filter(
+        time_parked__lt=now_utc,
+    ).filter(Q(time_left__isnull=True) | Q(time_left__gt=today_start_utc)))
+    boundary_times = sorted({today_start_utc, now_utc} | {
+        t
+        for ev in evlots_today
+        for t in (
+            max(ev.time_parked, today_start_utc),
+            min(ev.time_left if ev.time_left else now_utc, now_utc),
+        )
+    })
+    full_capacity_secs = 0.0
+    for i in range(len(boundary_times) - 1):
+        mid = boundary_times[i] + (boundary_times[i + 1] - boundary_times[i]) / 2
+        occupied_lots = {
+            str(ev.lot_number)
+            for ev in evlots_today
+            if max(ev.time_parked, today_start_utc) <= mid < (ev.time_left if ev.time_left else now_utc)
+        }
+        if len(occupied_lots) >= len(LOT_NUMBERS):
+            full_capacity_secs += (boundary_times[i + 1] - boundary_times[i]).total_seconds()
+    ice_pressure_mins = round(full_capacity_secs / 60)
+
+    return JsonResponse({
+        "ok": True,
+        "dwell_avg": dwell_avg,
+        "dwell_median": dwell_median,
+        "overstay_count": overstay_count,
+        "ice_pressure_mins": ice_pressure_mins,
+        "lot_utilisation": lot_utilisation,
+        "hourly_counts": hourly_counts,
+        "hourly_ev": hourly_ev,
+        "hourly_ice": hourly_ice,
+        "chart_date": now_local.strftime("%b %d"),
+        "total_today": sum(hourly_counts),
+    })
+
+
+@require_GET
+def ev_sessions_api(request):
+    """
+    API: Paginated EVLot session history with optional filters.
+    Query params:
+      from     ISO date string (inclusive)
+      to       ISO date string (inclusive)
+      lot      lot number string e.g. "1"
+      status   "ongoing" | "completed"
+      offset   integer (default 0)
+      limit    integer (default 20)
+    """
+    from django.db.models import Q
+    from datetime import timezone as dt_timezone
+
+    local_tz = timezone.get_current_timezone()
+
+    from_str = (request.GET.get("from") or "").strip()
+    to_str   = (request.GET.get("to")   or "").strip()
+    lot_num  = (request.GET.get("lot")  or "").strip()
+    status   = (request.GET.get("status") or "").strip()
+    try:
+        offset = max(0, int(request.GET.get("offset", 0)))
+        limit  = min(100, max(1, int(request.GET.get("limit", 20))))
+    except (ValueError, TypeError):
+        offset, limit = 0, 20
+
+    qs = EVLot.objects.all()
+
+    if from_str:
+        try:
+            from_dt = timezone.datetime.fromisoformat(from_str)
+            if timezone.is_naive(from_dt):
+                from_dt = timezone.make_aware(from_dt, local_tz)
+            qs = qs.filter(time_parked__gte=from_dt)
+        except ValueError:
+            pass
+
+    if to_str:
+        try:
+            to_dt = timezone.datetime.fromisoformat(to_str)
+            if timezone.is_naive(to_dt):
+                to_dt = timezone.make_aware(to_dt, local_tz)
+            # inclusive: add one day
+            to_dt = to_dt.replace(hour=23, minute=59, second=59)
+            qs = qs.filter(time_parked__lte=to_dt)
+        except ValueError:
+            pass
+
+    if lot_num:
+        qs = qs.filter(lot_number=lot_num)
+
+    if status == "ongoing":
+        qs = qs.filter(time_left__isnull=True)
+    elif status == "completed":
+        qs = qs.filter(time_left__isnull=False)
+
+    total = qs.count()
+    records = list(qs.order_by("-time_parked")[offset:offset + limit])
+
+    def _fmt(dt):
+        return dt.isoformat() if dt else None
+
+    data = [
+        {
+            "id": str(r.pk),
+            "lot_id": f"EV-{r.lot_number}",
+            "carplate": r.carplate,
+            "name": r.name,
+            "phone": r.phone,
+            "arrival": _fmt(r.time_parked),
+            "departure": _fmt(r.time_left),
+            "is_authorised": None,  # EV lots don't use this concept
+            "source": "ev",
+        }
+        for r in records
+    ]
+
+    return JsonResponse({"ok": True, "data": data, "total": total})
